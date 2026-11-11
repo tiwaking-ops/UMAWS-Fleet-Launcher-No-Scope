@@ -70,7 +70,7 @@ def main() -> int:
         path = f"workload/{deliverable}"
         card = kernel.task_create(
             title,
-            type="work",
+            type="implement",
             goal_ref="toy experiment workload",
             scope={"write": [path], "read": ["workload/README.md"]},
             oracles=[oracle_for([(path, "TOY-OK")])],
@@ -87,7 +87,7 @@ def main() -> int:
     for title, paths, marker in OVERLAP:
         card = kernel.task_create(
             title,
-            type="work",
+            type="implement",
             goal_ref="toy experiment workload",
             scope={"write": list(paths), "read": ["workload/README.md"]},
             oracles=[oracle_for([(p, marker) for p in paths])],
