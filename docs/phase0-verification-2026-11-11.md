@@ -103,4 +103,8 @@ Phase 0 cannot gate green until these are resolved. None is self-grantable.
 
 ## 4. Gate status
 
-**Phase 0 gate: NOT PASSED.** Scaffold verified (one counting discrepancy, D-01, non-integrity). Operator items 1–5 outstanding. No phase beyond Phase 0 has been started; no configuration in the toy repo has been altered since the scaffold commits.
+**Phase 0 gate: NOT PASSED — scaffold OK, operator items outstanding.**
+
+Verified at the end of Phase 0: tree clean (`dirty=0`), HEAD `eacee26`, `pmk sentinel` clean with no findings across `I1 I3 I4 I5 I6 I7 I8' I13 I14 I15 I16 I17`, `I1 chain verifies (5 events)`, 0 tasks, 0 worktrees, 0 incidents, no remote.
+
+No integration violation occurred. No phase beyond Phase 0 has been started; no configuration in the toy repo has been altered since the scaffold commits. The gate is held open only by the operator items in §3.
