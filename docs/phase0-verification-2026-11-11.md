@@ -54,6 +54,10 @@ Cause: my own Phase 0 verification. `pmk pins record`, `pmk pins check` and `pmk
 
 No I1, I8 or I13 violation is present; this is a counting artefact, not an integrity failure. Recorded for the report rather than corrected.
 
+### D-02 — first Phase 0 commit was a partial add (corrected)
+
+`32b3a1c` staged only the two `docs/` paths, so the kernel-generated changes already on disk (events 4–5 and the re-rendered `.pm/views/status.md`, whose policy version moved `p-unset` → `p-2026-10-23`) were left out and showed as modified. Investigated as a possible background writer: **no** — there are no active git hooks in the toy repo (only `*.sample`), no `core.hooksPath` local or global, and the event count stayed at 5 across repeated reads. Cause was my own staging scope. Committed as kernel output in the next commit; I2 is unaffected because `.pm/` was never hand-edited.
+
 ## 2. Protective capture of the live repository (read-only)
 
 Captured before any phase runs, per Phase 0:
