@@ -338,6 +338,87 @@ computed before the kill.
 
 ### 7.3 Arm - cap 20
 
-Launched **22:19:05Z** from the identical normalised start state (DONE 24, READY
-44, claimable 28), after verifying no process was bound to either arm root.
-Result pending.
+Root `C:\temp\projects\toy-arm-cap20`. Launched **22:19:05Z** from the identical
+normalised start state (DONE 24, READY 44, claimable 28), after verifying no
+process was bound to either arm root. Window reconstructed from its own ledger:
+first event **22:19:16Z**, last **22:45:06Z** = **1550 s**, agreeing with the
+run's own report of 1551 s. It stopped early, at 0.86 of budget, after 3 ticks,
+because REC-15 declined to start a tick that would outlive the budget.
+
+```
+CLAIMED            : 25      (same as the control)
+AGENT_STARTED      : 33
+AGENT_EXITED       : 27      -> 6 never exited
+INTEGRATED         : 2   (T-0020, T-0046)
+SUBMITTED          : 19 distinct
+throughput         : 4.645 DONE/h
+denial             : 69.5%-class backlog; 57 FLEET_BLOCKED
+INCIDENT           : 0
+QUARANTINED        : 0
+sentinel findings  : []   (exit 0)
+```
+
+### 7.4 Width: the cap decides it
+
+Concurrency reconstructed identically for both arms - stepwise from
+`AGENT_STARTED`/`AGENT_EXITED` pairs over each arm's own measured window:
+
+| concurrency | cap 10 (6612 s) | cap 20 (1550 s) |
+|---|---|---|
+| **max observed** | **10** | **20** |
+| >= 2 | 98.5% | 95.9% |
+| >= 5 | 95.9% | 88.8% |
+| >= 10 | 92.4% | 81.5% |
+| >= 11 | **0.0%** | 80.5% |
+| >= 15 | 0.0% | 76.1% |
+| >= 20 | 0.0% | **56.2%** |
+| most-held level | 10 for 92.4% | 20 for 56.2% |
+
+Neither arm ever exceeded its own cap by one. **Raising the cap from 10 to 20
+doubled sustained width from 10 to 20.** This is the clean positive result of
+the experiment and it directly reverses the inference the first pair invited
+("the cap makes no difference"): the first pair could not reach 10 either way
+because it had 3 claimable cards.
+
+## 8. Verdict on D-78
+
+**Width: answered, and the answer is yes.** 10 -> 20 raised sustained concurrent
+agents from 10 to 20, with each arm pinned at exactly its own ceiling.
+
+**Throughput: not answered by this pair, and the reason is now visible rather
+than guessed.**
+
+| per measured hour | cap 10 | cap 20 |
+|---|---|---|
+| **landed** (distinct INTEGRATED) | 4.900 /h | 4.645 /h |
+| **produced** (distinct SUBMITTED) | 9.800 /h | **44.129 /h** |
+| agents exited | 10.889 /h | 51.097 /h |
+
+Agents at cap 20 produced finished work about **4.5x faster**, but work *landing*
+stayed flat, within noise of the control and if anything slightly lower. The cap
+is not what is limiting throughput at 20: something downstream of the agent is.
+At window close the cap-20 copy held **17 tasks SUBMITTED and only 2 landed**,
+against 8 submitted for the control - an integration backlog, consistent with
+the known serial `drain_merge_queue` gate. So at cap 20 the binding constraint
+has moved from dispatch width to integration.
+
+Three reasons not to read the 4.645 vs 4.900 gap as "wider is worse":
+
+1. **The windows differ by 4.3x** (6612 s vs 1550 s). The control had 16 ticks
+   to drain its backlog; the cap-20 arm had 3. Comparing landed *totals* (9 vs 2)
+   across unequal windows would be meaningless.
+2. **Both arms claimed exactly 25 cards** - supply ran out in both, not the cap.
+   That is also why cap 20 held its ceiling only 56.2% of the window against the
+   control's 92.4%: with ~25 dispatchable cards, concurrency decays as agents
+   exit. Holding 20 steady would need materially more than 20 cards.
+3. Neither bound its run to the requested budget, in opposite directions -
+   x3.67 over for the control, 0.86 under for the arm - so no equal-budget
+   comparison exists. REC-16 makes the measured window the denominator, which is
+   honest but does not make the two runs exchangeable.
+
+**What follows.** If the question is *can the fleet go wider*, D-78 is answered
+and the cap should follow the target width. If the question is *does wider finish
+more work*, that is now a question about **integration throughput**, not the cap,
+and would need either equal measured windows or the serial merge gate fixed
+first. That is a recommendation, not a finding, and nothing here changes either
+repository.
