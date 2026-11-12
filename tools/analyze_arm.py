@@ -32,21 +32,35 @@ def main() -> int:
     args = ap.parse_args()
 
     kernel = Kernel(root=ROOT)
-    events = kernel.events()
+    all_events = kernel.events()
 
     start = parse_ts(args.start) if args.start else None
     end = parse_ts(args.end) if args.end else None
 
-    # --- lease intervals ------------------------------------------------
-    opens: dict[str, dt.datetime] = {}
-    intervals: list[tuple[str, dt.datetime, dt.datetime]] = []
-    closes = {"REVOKED", "TASK_DONE"}
-    for e in events:
+    # Apply the window ONCE, and read every counter below from `events`.
+    # Counting from the unfiltered log makes --start/--end silently affect
+    # only the lease intervals while the headline numbers still describe
+    # activity outside the window (probe leases, pre-gate-fix runs).
+    events = []
+    for e in all_events:
         ts = parse_ts(e.ts)
         if start and ts < start:
             continue
         if end and ts > end:
             continue
+        events.append(e)
+
+    if start or end:
+        print(f"window             : {len(events)} of {len(all_events)} events")
+
+    # --- lease intervals ------------------------------------------------
+    opens: dict[str, dt.datetime] = {}
+    intervals: list[tuple[str, dt.datetime, dt.datetime]] = []
+    # A lease ends when it is revoked or when the card integrates (DONE).
+    # "TASK_DONE" is not emitted by this pipeline; INTEGRATED is terminal.
+    closes = {"REVOKED", "INTEGRATED", "TASK_DONE"}
+    for e in events:
+        ts = parse_ts(e.ts)
         task = e.subject or ""
         if e.type == "CLAIMED":
             opens.setdefault(task, ts)
@@ -81,28 +95,52 @@ def main() -> int:
 
     # --- the rest -------------------------------------------------------
     types = collections.Counter(e.type for e in events)
-    done = [e for e in events if e.type == "TASK_DONE"]
+    done_events = [e for e in events
+                   if e.type in ("INTEGRATED", "TASK_DONE")]
+    # Count distinct cards, not events: a card that emits both must not
+    # be counted twice.
+    done_tasks = sorted({e.subject for e in done_events if e.subject})
     incidents = types.get("INCIDENT", 0)
     refusals = types.get("LEASE_REFUSED", 0)
     claimed = types.get("CLAIMED", 0)
 
-    if intervals:
+    # D-L6 denials are recorded as FLEET_BLOCKED with
+    # payload {"blocker": "scope_overlap"} -- NOT as LEASE_REFUSED.  Counting
+    # only LEASE_REFUSED reports zero denials for a run full of them.
+    blocked = [e for e in events if e.type == "FLEET_BLOCKED"]
+    blockers = collections.Counter(
+        (e.payload or {}).get("blocker", "?") for e in blocked)
+    attempts = claimed + len(blocked)
+
+    # Throughput is per unit of ARM WALL TIME.  When the operator supplies a
+    # window, that window is the wall clock; otherwise fall back to the span
+    # actually covered by leases.  Using the lease span silently inflates the
+    # denominator with idle time and understates throughput.
+    if start and end:
+        wall_start, wall_end = start, end
+    elif intervals:
         wall_start = min(o for _, o, _ in intervals)
         wall_end = max(c for _, _, c in intervals)
-        hours = max((wall_end - wall_start).total_seconds() / 3600.0, 1e-9)
     else:
-        hours = 0.0
+        wall_start = wall_end = None
+    hours = ((wall_end - wall_start).total_seconds() / 3600.0
+             if wall_start and wall_end else 0.0)
 
     print(f"arm                : {args.arm}")
     print(f"leases opened      : {len(intervals)}")
     print(f"CLAIMED events     : {claimed}")
     print(f"LEASE_REFUSED      : {refusals}")
-    print(f"TASK_DONE          : {len(done)}")
+    print(f"FLEET_BLOCKED      : {len(blocked)} {dict(blockers)}")
+    print(f"claim attempts     : {attempts}")
+    print(f"tasks DONE         : {len(done_tasks)} {done_tasks}")
     print(f"INCIDENT           : {incidents}")
     print(f"peak concurrent    : {peak}")
     print(f"sustained (>=60s)  : {sustained}")
     print(f"wall hours (leases): {hours:.4f}")
-    print(f"throughput DONE/h  : {len(done) / hours if hours else 0.0:.3f}")
+    print(f"throughput DONE/h  : "
+          f"{(len(done_tasks) / hours) if hours else 0.0:.3f}")
+    print(f"denial rate %      : "
+          f"{(len(blocked) / attempts * 100.0) if attempts else 0.0:.1f}")
     print(f"conflict+incident %: "
           f"{(incidents / claimed * 100.0) if claimed else 0.0:.1f}")
     print()
