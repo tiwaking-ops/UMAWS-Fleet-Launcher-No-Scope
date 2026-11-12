@@ -876,6 +876,36 @@ def run_bounded(seconds: float, tick, sleep=time.sleep,
             "skipped_final_tick": skipped_final_tick}
 
 
+def run_report_lines(report: dict, requested_seconds: float) -> list[str]:
+    """The human-readable verdict on a bounded run. REC-15 / REC-16.
+
+    Kept separate from ``cmd_project_run`` precisely because leaving it inline
+    once hid a ``NameError`` behind a green test suite: ``run_bounded`` returns
+    ``skipped_final_tick`` inside its dict, but the caller still referred to it
+    as a local, and no test exercised the caller. A function this small is
+    cheap to test directly, and both of its branches are asserted below.
+    """
+    measured = report["measured_s"]
+    last = report["last_tick_s"]
+    overrun = measured - requested_seconds
+    lines = [f"run budget         : requested {requested_seconds:.0f}s, "
+             f"measured {measured:.0f}s, {report['ticks']} ticks "
+             f"(last tick {last:.1f}s)"]
+    if last > requested_seconds:
+        lines.append(f"  WARNING: one tick alone took {last:.0f}s, longer than "
+                     f"the whole {requested_seconds:.0f}s budget. No deadline "
+                     f"logic can bound that - the conductor must be bounded "
+                     f"(REC-15, unimplemented half).")
+    elif overrun > max(last, 1.0):
+        lines.append(f"  WARNING: ran {overrun:.0f}s past its budget, which is "
+                     f"more than one tick ({last:.1f}s). Per-hour figures must "
+                     f"use the MEASURED window (REC-16).")
+    elif report["skipped_final_tick"]:
+        lines.append("  stopped before starting a further tick that would have "
+                     "outlived the budget (REC-15).")
+    return lines
+
+
 def cmd_project_run(args) -> int:
     """Run the Conductor and the Dispatcher for a while."""
     from fleet.conductor import Conductor
@@ -901,21 +931,10 @@ def cmd_project_run(args) -> int:
         # REC-15 / U-01: see run_bounded().
         report = run_bounded(args.seconds, lambda: (conductor.tick(),
                                                     dispatcher.tick()))
-        ticks = report["ticks"]
-        last_tick_s = report["last_tick_s"]
-        measured = report["measured_s"]
-        overrun = measured - args.seconds
-        print(f"run budget         : requested {args.seconds:.0f}s, "
-              f"measured {measured:.0f}s, {ticks} ticks "
-              f"(last tick {last_tick_s:.1f}s)")
-        if overrun > max(last_tick_s, 1.0):
-            print(f"  WARNING: ran {overrun:.0f}s past its budget, which is "
-                  f"more than one tick ({last_tick_s:.1f}s). Per-hour "
-                  f"figures must use the MEASURED window (REC-16).",
-                  file=sys.stderr)
-        elif skipped_final_tick:
-            print("  stopped before starting a further tick that would have "
-                  "outlived the budget (REC-15).")
+        for line in run_report_lines(report, args.seconds):
+            # The warning goes to stderr; the rest to stdout with the metric.
+            print(line, file=(sys.stderr if line.lstrip().startswith("WARNING")
+                              else None))
         from fleet.project import project_status
         _out(project_status(kernel))
     finally:

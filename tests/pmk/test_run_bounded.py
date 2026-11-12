@@ -7,7 +7,7 @@ because the deadline was tested only at the top of the loop.
 
 from __future__ import annotations
 
-from pmk.cli import run_bounded
+from pmk.cli import run_bounded, run_report_lines
 
 
 class FakeClock:
@@ -74,3 +74,47 @@ def test_short_ticks_fill_the_budget():
 
     assert report["ticks"] >= 5
     assert report["measured_s"] <= 110.0
+
+
+# --- run_report_lines --------------------------------------------------
+# These exist because the reporting once lived inline in cmd_project_run,
+# where a NameError survived a green test suite: run_bounded returns
+# skipped_final_tick inside its dict, but the caller still referred to it as a
+# local. No test called the caller, so nothing caught it. A baseline run then
+# crashed after 3400s of work. Every branch below is therefore asserted.
+
+
+def _report(*, ticks=1, last_tick_s=0.0, measured_s=0.0, skipped=False):
+    return {"ticks": ticks, "last_tick_s": last_tick_s,
+            "measured_s": measured_s, "skipped_final_tick": skipped}
+
+
+def test_report_warns_when_one_tick_exceeds_the_whole_budget():
+    """Exactly what happened to the baseline-2 run: 1 tick of 3399.9s."""
+    lines = run_report_lines(
+        _report(ticks=1, last_tick_s=3399.9, measured_s=3400.0), 1800.0)
+
+    assert any("longer than the whole" in line for line in lines)
+
+
+def test_report_warns_when_overrun_exceeds_one_tick():
+    lines = run_report_lines(
+        _report(ticks=3, last_tick_s=10.0, measured_s=95.0), 60.0)
+
+    assert any("more than one tick" in line for line in lines)
+
+
+def test_report_reports_the_skipped_final_tick():
+    lines = run_report_lines(
+        _report(ticks=1, last_tick_s=100.0, measured_s=101.0, skipped=True),
+        150.0)
+
+    assert any("would have outlived the budget" in line for line in lines)
+
+
+def test_report_is_quiet_for_a_well_behaved_run():
+    lines = run_report_lines(
+        _report(ticks=5, last_tick_s=10.0, measured_s=55.0), 60.0)
+
+    assert len(lines) == 1
+    assert "WARNING" not in lines[0]
