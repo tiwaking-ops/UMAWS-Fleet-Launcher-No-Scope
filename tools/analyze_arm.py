@@ -1,11 +1,16 @@
 """Compute the proposal's section 10.1 metrics for one arm, from the ledger.
 
-Nothing here is inferred from configuration: width is counted from lease
-pairs (CLAIMED -> REVOKED / TASK_DONE), which is what 10.1 requires and what
-the baseline correction makes mandatory (max_total_agents does not bound
-held leases).
+Nothing here is inferred from configuration.  WIDTH IS COUNTED FROM LIVE
+AGENT RUNS (AGENT_STARTED -> AGENT_EXITED), because a kernel lease outlives
+its agent and lease concurrency overstates how many agents are actually
+working.  The lease figure is still reported alongside it, labelled as
+inflated, since the two disagree materially (Arm-0b: 16 leases vs 10 live).
+
+Throughput divides by the MEASURED window (REC-16), never by the requested
+budget; pass --requested-seconds to have the overrun flagged (REC-12).
 
 Usage:  python tools/analyze_arm.py [--arm NAME] [--start ISO] [--end ISO]
+                                    [--requested-seconds N]
 """
 
 import argparse
