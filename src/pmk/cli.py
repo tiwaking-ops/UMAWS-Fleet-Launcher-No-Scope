@@ -832,6 +832,50 @@ def cmd_project_resume(args) -> int:
     return 0
 
 
+def run_bounded(seconds: float, tick, sleep=time.sleep,
+                now=time.time) -> dict:
+    """Run ``tick()`` repeatedly until the budget is spent. REC-15 / U-01.
+
+    The deadline used to be tested only at the top of the loop, so a run
+    always overshot by a whole tick: a 30-minute budget became 97 minutes,
+    because one ``conductor.tick()`` alone runs the merge drain, an
+    integration and a ``pytest -q``.  Two changes:
+
+    1. never START a tick that is known to outlive the budget - a tick that
+       would take longer than the time left is skipped; and
+    2. never sleep past the deadline - even the 1 s nap used to overshoot.
+
+    A tick already running cannot be interrupted, so one tick of overshoot is
+    the irreducible granularity. ``run_bounded`` reports it rather than hiding
+    it, and callers warn when the overrun exceeds that single tick.
+
+    *sleep* and *now* are injectable so the bound can be tested with a fake
+    clock instead of by waiting in real time.
+    """
+    started = now()
+    deadline = started + seconds
+    ticks = 0
+    last_tick_s = 0.0
+    skipped_final_tick = False
+    while True:
+        remaining = deadline - now()
+        if remaining <= 0:
+            break
+        if ticks and last_tick_s > remaining:
+            skipped_final_tick = True
+            break
+        tick_started = now()
+        tick()
+        last_tick_s = now() - tick_started
+        ticks += 1
+        nap = min(1.0, max(0.0, deadline - now()))
+        if nap:
+            sleep(nap)
+    return {"ticks": ticks, "last_tick_s": last_tick_s,
+            "measured_s": now() - started,
+            "skipped_final_tick": skipped_final_tick}
+
+
 def cmd_project_run(args) -> int:
     """Run the Conductor and the Dispatcher for a while."""
     from fleet.conductor import Conductor
@@ -854,11 +898,24 @@ def cmd_project_run(args) -> int:
                                 fixture_root=_fixture_root(kernel))
         overseer = OverseerRunner(kernel, fleet_state)
         conductor = Conductor(kernel, dispatcher, overseer)
-        deadline = time.time() + args.seconds
-        while time.time() < deadline:
-            conductor.tick()
-            dispatcher.tick()
-            time.sleep(1)
+        # REC-15 / U-01: see run_bounded().
+        report = run_bounded(args.seconds, lambda: (conductor.tick(),
+                                                    dispatcher.tick()))
+        ticks = report["ticks"]
+        last_tick_s = report["last_tick_s"]
+        measured = report["measured_s"]
+        overrun = measured - args.seconds
+        print(f"run budget         : requested {args.seconds:.0f}s, "
+              f"measured {measured:.0f}s, {ticks} ticks "
+              f"(last tick {last_tick_s:.1f}s)")
+        if overrun > max(last_tick_s, 1.0):
+            print(f"  WARNING: ran {overrun:.0f}s past its budget, which is "
+                  f"more than one tick ({last_tick_s:.1f}s). Per-hour "
+                  f"figures must use the MEASURED window (REC-16).",
+                  file=sys.stderr)
+        elif skipped_final_tick:
+            print("  stopped before starting a further tick that would have "
+                  "outlived the budget (REC-15).")
         from fleet.project import project_status
         _out(project_status(kernel))
     finally:
