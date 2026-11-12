@@ -93,6 +93,36 @@ def main() -> int:
         if lvl >= sustained and (nxt - ts).total_seconds() >= 60:
             sustained = lvl
 
+    # --- width of LIVE agent runs, not leases ---------------------------
+    # A lease outlives its agent: the kernel lease survives after the run
+    # object leaves dispatcher.self.runs.  Lease concurrency therefore
+    # overstates how many agents are actually working, and width must be
+    # reported both ways or it is not interpretable.
+    live_open: dict[str, dt.datetime] = {}
+    live_pts: list[tuple[dt.datetime, int]] = []
+    for e in events:
+        ts = parse_ts(e.ts)
+        if e.type == "AGENT_STARTED":
+            if e.subject not in live_open:
+                live_open[e.subject] = ts
+                live_pts.append((ts, 1))
+        elif e.type == "AGENT_EXITED" and e.subject in live_open:
+            live_open.pop(e.subject)
+            live_pts.append((ts, -1))
+    live_peak = live_sustained = 0
+    if live_pts:
+        live_pts.sort()
+        cur = 0
+        lseries: list[tuple[dt.datetime, int]] = []
+        for t, d in live_pts:
+            cur += d
+            lseries.append((t, cur))
+            live_peak = max(live_peak, cur)
+        for i, (t, l) in enumerate(lseries):
+            nxt = lseries[i + 1][0] if i + 1 < len(lseries) else horizon
+            if l >= live_sustained and (nxt - t).total_seconds() >= 60:
+                live_sustained = l
+
     # --- the rest -------------------------------------------------------
     types = collections.Counter(e.type for e in events)
     done_events = [e for e in events
@@ -135,7 +165,8 @@ def main() -> int:
     print(f"tasks DONE         : {len(done_tasks)} {done_tasks}")
     print(f"INCIDENT           : {incidents}")
     print(f"peak concurrent    : {peak}")
-    print(f"sustained (>=60s)  : {sustained}")
+    print(f"LIVE peak concurrent: {live_peak}  (lease-based: {peak})")
+    print(f"LIVE sustained      : {live_sustained}  (lease-based: {sustained})")
     print(f"wall hours (leases): {hours:.4f}")
     print(f"throughput DONE/h  : "
           f"{(len(done_tasks) / hours) if hours else 0.0:.3f}")
