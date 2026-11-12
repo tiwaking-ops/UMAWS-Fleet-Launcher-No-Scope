@@ -13,11 +13,37 @@ config enables it.
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 
 __all__ = ["dry_run", "oracles_already_pass"]
+
+
+def _remove_scratch(path: Path) -> bool:
+    """Remove *path* whole, clearing read-only bits first.  True when gone."""
+    path = Path(path)
+    if not path.exists():
+        return True
+    # Deepest-first, files and directories: git leaves read-only files on
+    # Windows, and a read-only directory blocks its own removal.
+    for parent, dirs, files in os.walk(path, topdown=False):
+        for name in files + dirs:
+            try:
+                os.chmod(os.path.join(parent, name), stat.S_IWRITE)
+            except OSError:
+                pass
+    try:
+        os.chmod(path, stat.S_IWRITE)
+    except OSError:
+        pass
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        pass
+    return not path.exists()
 
 
 def oracles_already_pass(kernel, task, *, timeout: int = 600) -> tuple[bool, list[dict]]:
@@ -37,18 +63,22 @@ def oracles_already_pass(kernel, task, *, timeout: int = 600) -> tuple[bool, lis
 
     temp_dir = Path(tempfile.mkdtemp(prefix="pmk-precheck-"))
     worktree = temp_dir / "tree"
-    code, out, err = repo.git("worktree", "add", "--detach", str(worktree),
-                              repo.default_branch())
-    if code != 0:
-        return False, [{"error": f"precheck worktree: {(err or out).strip()}"}]
-
     results: list[dict] = []
     try:
+        code, out, err = repo.git("worktree", "add", "--detach", str(worktree),
+                                  repo.default_branch())
+        if code != 0:
+            return False, [{"error": f"precheck worktree: {(err or out).strip()}"}]
+
         for oracle in oracles:
             exit_code, _stdout, _stderr = run_command(oracle, worktree, timeout=timeout)
             results.append({"cmd": oracle, "exit": exit_code, "ok": exit_code == 0})
     finally:
         repo.git("worktree", "remove", "--force", str(worktree))
+        # The directory around the worktree is ours too.  Removing only the
+        # worktree is what left an empty ``pmk-precheck-*`` husk behind on
+        # every lease admission.
+        _remove_scratch(temp_dir)
 
     return all(result.get("ok") for result in results), results
 
@@ -147,7 +177,7 @@ def dry_run(kernel, task, *, base_ref: str = "", patch=None,
         for worktree in (scratch_wt, base_wt):
             repo.git("worktree", "remove", "--force", str(worktree))
         repo.git("worktree", "prune")
-        shutil.rmtree(temp_root, ignore_errors=True)
+        _remove_scratch(temp_root)
 
     base_all = all(row["ok"] for row in report["base"]["oracles"])
     scratch_all = all(row["ok"] for row in report["scratch"]["oracles"])
