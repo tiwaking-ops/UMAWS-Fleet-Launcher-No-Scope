@@ -398,8 +398,11 @@ class Conductor:
                                 "message": "acceptance oracles failed"})
                 continue
 
+            # REC-10: attribute the commit to the agent that did the work.
+            agent = (getattr(lease, "profile_id", None)
+                     or getattr(lease, "agent", None))
             result = merge_mod.integrate(self.kernel, task, lease, worktree,
-                                         gate_cmd=gate_cmd)
+                                         gate_cmd=gate_cmd, agent=agent)
             results.append(result.to_dict())
             if result.ok:
                 try:

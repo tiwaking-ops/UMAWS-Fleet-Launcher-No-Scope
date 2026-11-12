@@ -101,8 +101,35 @@ class MergeResult:
                 "files": self.files, "failure_class": self.failure_class}
 
 
+#: REC-10: provenance trailer.  The *author* stays pinned to the pipeline
+#: identity (see ``test_commit_worktree_pins_the_pipeline_identity``; that pin
+#: is what stopped four commits landing under the human identity), so the
+#: acting agent is recorded in the trailer instead.  Arm A needs to be able to
+#: attribute a commit to the agent that produced it, and it could not before.
+PROVENANCE_TRAILER_LABELS = ("Agent", "Model", "Fence")
+
+
+def provenance_trailer(*, agent: str | None = None, model: str | None = None,
+                       fence: object = None) -> str:
+    """Return the provenance paragraph for a commit message (may be "").
+
+    Empty inputs are omitted rather than written as ``unknown``: a trailer
+    line saying "unknown" looks like information and is worse than absent.
+    """
+    lines = []
+    if agent:
+        lines.append(f"Agent: {agent}")
+    if model:
+        lines.append(f"Model: {model}")
+    if fence is not None:
+        lines.append(f"Fence: {fence}")
+    return "\n".join(lines)
+
+
 def commit_worktree(repo, worktree: str | Path, message: str,
-                    paths: list | None = None) -> tuple[bool, str]:
+                    paths: list | None = None, *,
+                    agent: str | None = None,
+                    model: str | None = None) -> tuple[bool, str]:
     """Commit the worker's changes on the lease branch.
 
     The harness commits, never the worker.
@@ -125,8 +152,11 @@ def commit_worktree(repo, worktree: str | Path, message: str,
         return False, err or status
     if not status.strip():
         return True, ""            # nothing to commit
-    code, out, err = repo.git(*PIPELINE_IDENTITY, "commit", "-m", message,
-                              cwd=Path(worktree))
+    body = provenance_trailer(agent=agent, model=model)
+    git_args = [*PIPELINE_IDENTITY, "commit", "-m", message]
+    if body:
+        git_args += ["-m", body]
+    code, out, err = repo.git(*git_args, cwd=Path(worktree))
     if code != 0:
         return False, err or out
     _, commit, _ = repo.git("rev-parse", "HEAD", cwd=Path(worktree))
@@ -163,8 +193,35 @@ def _persist_gate_output(bundle, kernel, output: dict) -> None:
     bundle.write(kernel.repo.evidence_dir)
 
 
+def acting_profile_for(kernel, task_id: str, lease=None) -> str:
+    """The acting agent for *task_id*, as the ledger recorded it.
+
+    REC-10.  ``Lease.agent`` carries only the adapter family ("kilo",
+    "hermes") and ``Lease.session`` is empty, so neither identifies the
+    profile.  The full profile id is written into the ``AGENT_STARTED``
+    payload, so that is the authority; the lease family is the fallback when
+    the event is absent.
+    """
+    best = ""
+    for event in kernel.events():
+        if event.type != "AGENT_STARTED":
+            continue
+        subject = event.subject or ""
+        payload = event.payload or {}
+        if subject != task_id and payload.get("task") != task_id:
+            continue
+        profile = payload.get("profile") or ""
+        if profile:
+            best = profile          # last writer wins -> most recent
+    if best:
+        return best
+    return (getattr(lease, "agent", "") or "") if lease is not None else ""
+
+
 def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
-              gate_cmd: str = "", keep_worktree: bool = True) -> MergeResult:
+              gate_cmd: str = "", keep_worktree: bool = True,
+              agent: str | None = None,
+              model: str | None = None) -> MergeResult:
     """Run one lease through the merge queue.
 
     B-R2b: The merge and gate run in a TEMP WORKTREE (not the main tree).
@@ -232,7 +289,15 @@ def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
                      "action": "pinned the commit to the pipeline identity"})
 
     message = f"feat({task.id}): {task.title}\n\nFence {lease.fence}.\n"
-    ok, detail = commit_worktree(repo, worktree, message, task.write_scope)
+    # REC-10: fall back to whatever identity the lease actually carries, so
+    # the trailer is populated even when a caller does not pass it.
+    if agent is None:
+        try:
+            agent = acting_profile_for(kernel, task.id, lease)
+        except Exception:                      # noqa: BLE001
+            agent = getattr(lease, "agent", None) or None
+    ok, detail = commit_worktree(repo, worktree, message, task.write_scope,
+                                 agent=agent, model=model)
     if not ok:
         result.failure_class = "INFRASTRUCTURE_FAILED"
         kernel.record_event("INFRASTRUCTURE_FAILED", subject=task.id,

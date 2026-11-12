@@ -75,6 +75,46 @@ def test_identity_anomaly_is_quiet_for_the_pipeline_identity(kernel):
     assert identity_anomaly(kernel.repo, kernel.repo.root) == ""
 
 
+def test_commit_worktree_records_the_acting_agent_and_keeps_the_pin(kernel):
+    """REC-10: the agent is attributed in the trailer, the pin is untouched.
+
+    The author must stay the pipeline identity (that is the F9 pin), so the
+    acting agent has to travel in the trailer instead of in the author field.
+    Assert both halves: one without the other is either a regression of the
+    pin or a trailer that never gets written.
+    """
+    root = kernel.repo.root
+    _configure_human(root)
+    (root / "src" / "thing.py").write_text("VALUE = 43\n", encoding="utf-8")
+
+    ok, commit = commit_worktree(kernel.repo, root, "attributed commit",
+                                 ["src/thing.py"], agent="cline-beam",
+                                 model="anthropic/claude-opus")
+
+    assert ok, commit
+    # The pin survives the addition.
+    assert _out(root, "log", "-1", "--format=%an <%ae>") == (
+        f"{PIPELINE_NAME} <{PIPELINE_EMAIL}>")
+    # And the acting agent is recorded, with the model alongside it.
+    body = _out(root, "log", "-1", "--format=%B")
+    assert "Agent: cline-beam" in body
+    assert "Model: anthropic/claude-opus" in body
+
+
+def test_commit_worktree_omits_empty_provenance(kernel):
+    """An absent agent must not be written as a confident-sounding value."""
+    root = kernel.repo.root
+    _configure_human(root)
+    (root / "src" / "thing.py").write_text("VALUE = 44\n", encoding="utf-8")
+
+    ok, commit = commit_worktree(kernel.repo, root, "unattributed commit",
+                                 ["src/thing.py"])
+
+    assert ok, commit
+    body = _out(root, "log", "-1", "--format=%B")
+    assert "Agent:" not in body
+
+
 def test_commit_worktree_pins_the_pipeline_identity(kernel):
     root = kernel.repo.root
     _configure_human(root)
