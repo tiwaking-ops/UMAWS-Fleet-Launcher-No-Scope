@@ -2,9 +2,9 @@
 document:
   title: "Incident and repair report — Arm-0 measurement failure and its remediation"
   status: "Comprehensive incident report. Authoritative for what went wrong and what must change before further arms run. Authorises no further change by itself."
-  version: "1.3.0"
+  version: "1.3.1"
   date: "2026-11-12"
-  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79). v1.2.0 adds §9.1 implementation status for every REC, verified by measurement, and states REC-15's partial scope explicitly. v1.3.0 records the independent assessment: corrects the merge-conflict, anomaly-count and cap-binding claims, and adds §14."
+  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79). v1.2.0 adds §9.1 implementation status for every REC, verified by measurement, and states REC-15's partial scope explicitly. v1.3.0 records the independent assessment: corrects the merge-conflict, anomaly-count and cap-binding claims, and adds §14. v1.3.1 adds §14.4: §9.3's baseline-2 window includes the next run's first claims, so its 2.995 DONE/h is replaced by 4.024 DONE/h in the correct window."
 Author: "Tencent HY4 Preview, version tencent/hy4-preview-free (orcarouter)"
 provenance:
   author_llm: {name: "Tencent HY4 Preview", version: "tencent/hy4-preview-free (orcarouter)"}
@@ -636,3 +636,33 @@ denial-rate and width definitions need to be fixed before any arm is compared.
 assessment: **1,302 collected, 1,301 passed, 1 skipped, 0 failed** (18 m 50 s).
 The gate is green; it is the measurement definitions, not the code, that block a
 valid arm.
+
+### 14.4 Baseline-2 window correction (v1.3.1)
+
+§9.3 reports baseline-2 as **3,606 s, 21 CLAIMED, 35 `FLEET_BLOCKED`, 2.995
+DONE/h, 62.5% denial**. That window is **contaminated by the next run**.
+
+- The baseline-2 process started at **09:48:06Z** and exited at **10:32:50Z**
+  (2,684 s; the REC-15 warning fired because one tick alone exceeded the 1,800 s
+  budget).
+- §9.3's 3,606 s window ends at **10:48:10Z**, which is 15 min 20 s **after** the
+  process exited. The events from **10:44:42Z to 10:48:10Z** are the **next
+  run's** first claims — 8 `CLAIMED` and 11 `FLEET_BLOCKED` — not baseline-2.
+  13 + 8 = 21 and 24 + 11 = 35, which is exactly §9.3's pair.
+- In the correct baseline-2 window (**09:48:06Z → 10:32:50Z**): **13 `CLAIMED`,
+  24 `FLEET_BLOCKED`, 3 `DONE`, 4.024 DONE/h, 64.9% denial (24/37), 0
+  `QUARANTINED`**. See `docs/baseline2-evidence-rederive-2026-11-12.md`.
+- §9.3's "OVERRAN ×2.00" is really **×1.49** (2,684 / 1,800).
+- The "21 ticks / one tick 2,675 s" pair is not independently verifiable from the
+  ledger; the process ran 2,684 s. The tick count should come from the run's own
+  `run_bounded` report, not from a ledger reconstruction.
+
+The **clean-start** claim in §9.3 survives: the 09:48 run began with no
+`SUBMITTED` backlog (the seven cards were returned to `READY` by the pre-run
+cleanup), so its three completions were produced in-window. The error is the
+window end, not the start.
+
+The **width** claim needs the §14.1 qualification: "LIVE sustained 10" is the
+max-held-≥60 s figure. Baseline-2's live level is **3 for 1,778 s (66% of the
+window)** and **10 for 671 s (25%)**. Both runs reached 10, but neither sustained
+10 as its steady state.
