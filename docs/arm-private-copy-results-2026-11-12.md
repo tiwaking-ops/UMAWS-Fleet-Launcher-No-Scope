@@ -124,6 +124,68 @@ denominator, not because two samples carry much information.
 Root `C:\temp\projects\toy-arm-cap20`. Launched **12:08:29Z**, identical
 protocol (`--seconds 1800`). Isolation verified at launch: exactly one conductor
 (PID 6504) plus its `pmk.exe` shim child, both bound to that copy, nothing bound
-to the cap-10 copy.
+to the cap-10 copy. Window reconstructed from its own ledger: start marker
+**12:08:29Z**, last event **12:37:54Z** = **1765 s**, matching the run's own
+report exactly.
 
-Result pending.
+```
+CLAIMED            : 3
+AGENT_STARTED      : 3
+AGENT_EXITED       : 3
+INTEGRATED         : 2
+tasks DONE         : 2   (T-0019, T-0043)
+LIVE peak          : 2
+LIVE sustained     : 2
+throughput         : 4.079 DONE/h
+denial             : 95.5%  (63 / 66 attempts)
+INCIDENT           : 0
+QUARANTINED        : 0
+sentinel findings  : []   (exit 0)
+```
+
+## 4. Cap 10 vs cap 20
+
+| | cap 10 (control) | cap 20 (Arm A) |
+|---|---|---|
+| window (measured) | 1425 s (0.79 of budget) | 1765 s (0.98 of budget) |
+| ticks | 59 | 57 |
+| CLAIMED | 3 | 3 |
+| AGENT_STARTED / EXITED | 3 / 3 | 3 / 3 |
+| tasks DONE | 2 (T-0019, T-0043) | 2 (T-0019, T-0043) |
+| LIVE peak | 2 | 2 |
+| LIVE sustained | 2 | 2 |
+| throughput | 5.053 DONE/h | 4.079 DONE/h |
+| denial | 95.1% (48/61) | 95.5% (53/66) |
+| `attempts_exhausted` | 48 | 53 |
+| INCIDENT / QUARANTINED | 0 / 0 | 0 / 0 |
+| sentinel | `[]` exit 0 | `[]` exit 0 |
+
+**The two arms are the same run.** Identical claims, identical width, and even
+the same two cards completed. No `FLEET_BLOCKED` in either window names a fleet
+cap, and neither arm ever had more than 2 agents alive, so **the cap was not
+reached at 10 or at 20**.
+
+Throughput differs (5.053 vs 4.079) only because both completed 2 tasks in
+different measured windows; on two samples each, that gap is noise, not signal.
+
+## 5. Verdict: D-78 is not answered by this pair
+
+The question was whether raising the cap from 10 to 20 increases sustained width
+and throughput. These arms cannot answer it, and the reason is not the cap — it
+is that **the card pool was already poisoned before either arm launched** (§1.1):
+16 cards carried an exhausted attempt counter inherited from earlier aborted
+runs, leaving only a handful of dispatchable cards. With supply limited to about
+3 claims, the ceiling is irrelevant, exactly as a fleet of 2 cannot test the
+difference between 10 and 20.
+
+So this pair shows **no evidence either way**, and the tempting reading — "raising
+the cap made no difference, therefore the cap does not bind" — is **not
+supported**. What is supported is narrower and still useful: under this card
+pool, neither cap value was approached.
+
+**To actually test D-78**, the attempt counters must be reset in both copies and
+both arms re-run, symmetrically. That is a further intervention beyond the single
+requeue D-79 permits per arm, so it is not done here; it is a decision for the
+operator. Note the confound that would remain even then: 22 of 44 cards are
+already DONE, so a wider fleet may still starve for tractable cards rather than
+reach 20.
