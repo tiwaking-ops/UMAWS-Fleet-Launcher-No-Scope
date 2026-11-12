@@ -29,6 +29,10 @@ def main() -> int:
     ap.add_argument("--arm", default="ARM-0")
     ap.add_argument("--start", default="")
     ap.add_argument("--end", default="")
+    # REC-12: the value actually passed to e.g. `pmk project run --seconds N`.
+    # Supplying it lets the analyzer say whether the run honoured its budget,
+    # which decides whether any per-hour figure is trustworthy at all.
+    ap.add_argument("--requested-seconds", type=float, default=None)
     args = ap.parse_args()
 
     kernel = Kernel(root=ROOT)
@@ -174,7 +178,22 @@ def main() -> int:
     print(f"peak concurrent    : {peak}")
     print(f"LIVE peak concurrent: {live_peak}  (lease-based: {peak})")
     print(f"LIVE sustained      : {live_sustained}  (lease-based: {sustained})")
-    print(f"wall hours (leases): {hours:.4f}")
+    print(f"wall hours (measured): {hours:.4f}"
+          f"{'   <- REPORTING DENOMINATOR' if hours else ''}")
+    if args.requested_seconds is not None and wall_start and wall_end:
+        measured = (wall_end - wall_start).total_seconds()
+        ratio = measured / args.requested_seconds
+        verdict = "OK" if ratio <= 1.10 else "OVERRAN"
+        print(f"requested seconds   : {args.requested_seconds:.0f}"
+              f" ({args.requested_seconds / 3600.0:.4f} h)")
+        print(f"measured seconds    : {measured:.0f} ({hours:.4f} h)"
+              f"   -> {verdict}, x{ratio:.2f} of budget")
+        if verdict == "OVERRAN":
+            # cli.py:832-836 tests the deadline only once per tick, so a run
+            # overshoots by up to a whole tick.  See REC-15 / U-01.
+            print("  WARNING: --seconds did not bound this run.  Every per-hour")
+            print("  figure below uses the MEASURED window (REC-16).  Do not")
+            print("  compare it against a run that overran by a different factor.")
     print(f"throughput DONE/h  : "
           f"{(len(done_tasks) / hours) if hours else 0.0:.3f}")
     print(f"denial rate %      : "
