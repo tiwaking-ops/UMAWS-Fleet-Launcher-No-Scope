@@ -545,7 +545,7 @@ trust `--seconds`.
 toy decision register, the proposal, and the source and ledger they rest on.
 **Method:** independent ledger recount (858 events at the time of review; 1,100
 after baseline-2), source-line verification of every citation, and a full
-`pytest -q` run (1,292 tests, all passed).
+`pytest -q` run (1,302 collected: 1,301 passed, 1 skipped, 0 failed, 18 m 50 s).
 
 ### 14.1 Corrections applied in this version
 
@@ -627,11 +627,12 @@ denial-rate and width definitions need to be fixed before any arm is compared.
 5. Workload frozen and the seeded subset counted separately (REC-04).
 6. REC-10 implemented before Arm A (worker commit identity + provenance).
 7. Clean base: 0 active leases, sentinel and pins clean, card count recorded.
-8. Full gate green (re-run pending at the time of writing).
+8. Full gate green (1,301 passed, 1 skipped, 0 failed; 18 m 50 s).
 9. Exactly one matched requeue per arm, with attempts-remaining filter (REC-17).
 10. Throughput divided by the measured window, with the overrun factor recorded
     (REC-16/REC-12).
 
 **Assessor's note on the gate.** The full `pytest -q` run at the time of this
-assessment: **1,292 tests, all passed**. The gate is green; it is the measurement
-definitions, not the code, that block a valid arm.
+assessment: **1,302 collected, 1,301 passed, 1 skipped, 0 failed** (18 m 50 s).
+The gate is green; it is the measurement definitions, not the code, that block a
+valid arm.
