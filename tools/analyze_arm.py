@@ -134,6 +134,33 @@ def main() -> int:
 
     # --- the rest -------------------------------------------------------
     types = collections.Counter(e.type for e in events)
+
+    # --- REC-07 regression guard -----------------------------------------
+    # Historically the headline counters were read from the unfiltered log
+    # while only the lease intervals were windowed, so a windowed run still
+    # reported log-wide numbers (85-event window printing CLAIMED 40 for a
+    # window holding 4).  Prove, on every invocation, that the counters
+    # describe the window and agree with an independent recount of the log.
+    whole_types = collections.Counter(e.type for e in all_events)
+    for e in events:
+        ts = parse_ts(e.ts)
+        assert not start or ts >= start, f"event outside window: {e.type} {e.ts}"
+        assert not end or ts <= end, f"event outside window: {e.type} {e.ts}"
+    for t, n in types.items():
+        assert n <= whole_types.get(t, 0), (
+            f"windowed count for {t} ({n}) exceeds whole-log count "
+            f"({whole_types.get(t, 0)}): a counter is reading the wrong source")
+    if start or end:
+        differing = [t for t in whole_types if types.get(t, 0) != whole_types[t]]
+        print(f"reconcile (windowing): OK - {len(events)} of {len(all_events)}"
+              f" events; {len(differing)} event types differ from the whole log,"
+              f" so windowing demonstrably applied")
+        for t in ("CLAIMED", "FLEET_BLOCKED", "AGENT_STARTED", "AGENT_EXITED",
+                  "INTEGRATED", "QUARANTINED", "INCIDENT"):
+            w, g = types.get(t, 0), whole_types.get(t, 0)
+            if w != g:
+                print(f"    {t:15s} window {w:4d}  whole log {g:4d}")
+
     done_events = [e for e in events
                    if e.type in ("INTEGRATED", "TASK_DONE")]
     # Count distinct cards, not events: a card that emits both must not
