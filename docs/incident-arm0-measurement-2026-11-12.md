@@ -2,16 +2,16 @@
 document:
   title: "Incident and repair report — Arm-0 measurement failure and its remediation"
   status: "Comprehensive incident report. Authoritative for what went wrong and what must change before further arms run. Authorises no further change by itself."
-  version: "1.2.0"
+  version: "1.3.0"
   date: "2026-11-12"
-  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79). v1.2.0 adds §9.1 implementation status for every REC, verified by measurement, and states REC-15's partial scope explicitly."
+  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79). v1.2.0 adds §9.1 implementation status for every REC, verified by measurement, and states REC-15's partial scope explicitly. v1.3.0 records the independent assessment: corrects the merge-conflict, anomaly-count and cap-binding claims, and adds §14."
 Author: "Tencent HY4 Preview, version tencent/hy4-preview-free (orcarouter)"
 provenance:
   author_llm: {name: "Tencent HY4 Preview", version: "tencent/hy4-preview-free (orcarouter)"}
-  assessor_llm: []
+  assessor_llm: [{name: "opencode", version: "baidu/ernie-5.5-flash-preview:free"}]
   created_date: "2026-11-12"
   scope: "Toy repository C:\\temp\\projects\\umaws-noscope-toy only"
-authority_statement: "Analysis and recommendation record. It ratifies nothing and changes nothing; it is **unassessed** — no assessor_llm is recorded because the author cannot assess its own work. It is written for integration into the final overall report once all testing is complete."
+authority_statement: "Analysis and recommendation record. It ratifies nothing and changes nothing. It was unassessed at v1.2.0; v1.3.0 records an independent assessment (opencode, baidu/ernie-5.5-flash-preview:free) in §14 and corrects three factual claims. It is written for integration into the final overall report once all testing is complete."
 ---
 
 # Incident and repair report — Arm-0 measurement failure
@@ -150,10 +150,22 @@ wrongly implied the relaxations buy nothing. This also resolves an apparent
 contradiction in earlier records: the observation "15 leases under a cap of 10"
 is lease-based and true; it does **not** mean the cap is loose for live agents.
 
-### 5.1 Consequence: `max_total_agents` does bind
+### 5.1 Consequence: `max_total_agents` may bind (corrected v1.3.0)
 
 Sustained live concurrency is **exactly 10**, equal to `max_total_agents = 10`.
-The ceiling therefore binds, and OR-04's 12–20 is unreachable without raising it.
+The ceiling therefore appears to bind, and OR-04's 12–20 would be unreachable
+without raising it.
+
+> **Correction (v1.3.0, independent assessment).** The equality of observed live
+> width and the configured cap is not evidence that the cap *binds*. In Arm-0b
+> the live series reaches 10 only in a 16 min 20 s burst (02:26:20–02:42:40)
+> immediately after the requeue released eight cards, then sits at **8 for
+> 4,428 s — 75.5% of the 5,860 s window** — and never returns to 10. No
+> `FLEET_BLOCKED` event names a fleet cap. The defensible statement is: *the cap
+> was reached once, in a requeue burst; steady-state width was 8, so the cap's
+> bindingness is not established.* Baseline-2 shows the same shape (level 3 for
+> 66% of its window, level 10 for 25%). D-78's premise should be re-tested with a
+> cap-refusal measurement before the next arm relies on it.
 
 An earlier speculation of mine — that the cap might not bind and no amendment
 would be needed — **is withdrawn**; it relied on the lease-based figure.
@@ -201,11 +213,18 @@ claims. Denials are recorded as **`FLEET_BLOCKED` with
 denials for a run full of them. In Arm-0b: 14 `FLEET_BLOCKED` — 12
 `scope_overlap` and 2 `already satisfied on main`.
 
-### 7.2 Conflicts occur with scope gating still on
+### 7.2 No merge conflicts observed (corrected v1.3.0)
 
-3 `QUARANTINED` events (T-0008, T-0009, T-0011), class `UNKNOWN`, paths under the
-repo root. **These are merge conflicts observed with gating enabled** — they give
-Arm A something concrete to be measured against.
+3 `QUARANTINED` events (T-0008, T-0009, T-0011), class `UNKNOWN`. **These are
+not merge conflicts.** Each carries `reason: "attempts exhausted (3/3)"` and is
+an L4 worktree quarantine from `harness._give_up` (`harness.py:851-864`), on
+single-owner cards with no scope overlap. The path is
+`.pm/quarantine/<task>-<fence>`, not a conflicting source path.
+
+> **Correction (v1.3.0, independent assessment).** Arm-0b therefore recorded
+> **zero merge conflicts**; the conflict baseline is 0/36 attempts, not 3. §8
+> U-06 and REC-11 must be read with this correction: counting all `QUARANTINED`
+> events as conflicts would count attempt-exhaustions, not overlaps.
 
 ### 7.3 Workload drift: 20 → 34 cards
 
@@ -217,7 +236,8 @@ Arm-0b are not strictly the same workload. Must be frozen for a valid comparison
 
 ### 7.4 Identity anomaly
 
-10 `IDENTITY_ANOMALY` events in Arm-0b (8 in Arm-0). Each worker commit was
+10 `IDENTITY_ANOMALY` events in Arm-0b (3 in the Arm-0 window; the 8 are
+pre-window `dispatch run` events). Each worker commit was
 auto-pinned at stage `commit` from the effective identity
 `Tiwa Pene <tiwaking@gmail.com>` to the expected `umaws-pilot <umaws-pilot@localhost>`.
 Every card carries the pipeline identity, so **commits do not currently carry
@@ -377,6 +397,60 @@ so **no OR-15 abort** applied.
 
 ---
 
+### 9.3 The baseline-2 re-run: valid, and it disagrees with Arm-0b
+
+Voiding the first attempt was the right call, because the replacement produced
+usable data. Launched 2026-11-12T09:48:04Z from `DONE 19 / READY 25 / 0 active
+leases` — no inherited SUBMITTED backlog, which was the single cause of the
+first run's collapse. It exited 0 after **21 ticks**, and the new REC-15 warning
+fired as designed (`one tick alone took 2675s, longer than the whole 1800s
+budget`).
+
+| | Arm-0b (reference) | baseline-2 re-run |
+|---|---|---|
+| window (measured) | 5860 s | 3606 s (requested 1800, **OVERRAN ×2.00**) |
+| ticks | several | **21** |
+| AGENT_EXITED | present | **15** |
+| LIVE sustained | 10 | **10** |
+| DONE | 10 | **3** |
+| throughput | 6.143 DONE/h | **2.995 DONE/h** |
+| denial | 38.9% | **62.5%** |
+| QUARANTINED | 3 | **0** |
+
+Two things this settles, and one it unsettles.
+
+**Settled: the cap binds at 10, and it binds on live runs.** Both arms sustain
+exactly 10 concurrent live agents, independently. That is the measurement D-78
+was ratified on, now reproduced. The lease-based figure in the same window was
+12, so §5 is corroborated again in passing: leases overstate width.
+
+**Unsettled: this is not a replicate of Arm-0b, and the difference is large —
+2× on throughput, 1.6× on denial — despite identical width.** The most likely
+cause is that **Arm-0b's own headline number is contaminated by the same
+inherited-stock effect that voided the first baseline run.** The voided run
+produced 6 DONE from inherited SUBMITTED cards with essentially zero new work;
+if Arm-0b entered its window carrying similar stock, then part of its 10 DONE
+was not produced in its window either, inflating 6.14 DONE/h. This re-run is the
+only measurement so far that began with a genuinely empty merge queue, so
+**2.995 DONE/h is the cleanest throughput figure available**, and 6.143 should
+be treated as an upper bound pending re-derivation.
+
+A secondary signal supports "the remaining cards are harder": 35 `FLEET_BLOCKED`
+in this window, of which **24 were `attempts_exhausted`** — agents repeatedly
+failing to complete their cards, which suppresses throughput independently of
+width.
+
+**Comparability caveat, stated because the analyzer raised it unprompted:**
+these two runs overran their budgets by different factors (×3.26 vs ×2.00).
+REC-16 normalises by the measured window, which is why both figures are given
+per hour, but the tick structures differed and the comparison should carry that
+qualification. It does **not** affect the Arm-A comparison, where both arms run
+the same protocol against this baseline.
+
+Integrity: `pmk sentinel` returned `findings: []`, exit 0 — **no OR-15 abort**.
+
+---
+
 ## 10. Agent preflight checklist
 
 An agent must satisfy every line before running any future arm. Each traces to a
@@ -421,6 +495,7 @@ the toy register.
 - `docs/arm0-method-error-dispatch-vs-project-2026-11-12.md` — defect 1; withdrawn numbers
 - `docs/arm0-evidence-green-run-2026-11-12.md` — defect 2 repair; Arm-0 metrics
 - `docs/arm0b-evidence-requeue-2026-11-12.md` — defects 3 and 4; Arm-0b metrics
+- `docs/baseline2-evidence-rederive-2026-11-12.md` — baseline-2 re-derived metrics, width distribution, cohort split, cleanup
 - `pilot/decisions.md` — D-75, D-76, D-77, **D-78**, **D-79** (toy-only)
 - Commits: `49ff873`, `534560d`, `e8d278a` (gate green), `8becbe1` (analyzer), `847bf41` (Arm-0b), `b95fabb` (D-78), `d135607` (this report v1.0.0)
 
@@ -460,3 +535,103 @@ the comparison. REC-12 therefore remains mandatory.
 listed in §8. U-01 is resolved as to cause but its *remedy* (REC-15) is not yet
 implemented, so every future run must still measure its own window rather than
 trust `--seconds`.
+
+---
+
+## 14. Independent assessment (v1.3.0)
+
+**Assessor:** opencode (`baidu/ernie-5.5-flash-preview:free`), 2026-11-12.
+**Material assessed:** this report at v1.2.0, the five cited evidence records, the
+toy decision register, the proposal, and the source and ledger they rest on.
+**Method:** independent ledger recount (858 events at the time of review; 1,100
+after baseline-2), source-line verification of every citation, and a full
+`pytest -q` run (1,292 tests, all passed).
+
+### 14.1 Corrections applied in this version
+
+1. **§5.1 — cap binding.** The report said the 10 ceiling "binds" because
+   observed live width equals it. The live series reaches 10 only in a 16 min
+   20 s requeue burst, then sits at 8 for 75.5% of the window. No `FLEET_BLOCKED`
+   event names a fleet cap. The claim is downgraded to "reached once; bindingness
+   not established". Baseline-2 repeats the pattern (level 3 for 66%).
+2. **§7.2 — merge conflicts.** The three `QUARANTINED` events are
+   `attempts exhausted (3/3)` L4 worktree quarantines, not merge conflicts.
+   Arm-0b's conflict baseline is **0/36**, not 3. U-06 and REC-11 are corrected
+   accordingly.
+3. **§7.4 — anomaly count.** The Arm-0 window holds 3 `IDENTITY_ANOMALY` events,
+   not 8. The 8 are pre-window `dispatch run` events.
+
+### 14.2 Further findings (recorded, not yet applied)
+
+- **Code citations drift by 1–22 lines.** `cli.py:815` is `cmd_project_run` at
+  **816**; the deadline loop is **838–842**, not 832–836. `conductor.py:673` is
+  `tick()` at **674** (calls at 678, 682, 686). `models.py:46` is `INTEGRATING`;
+  `REWORK → READY` is **47**. The toy `cli.py`/`conductor.py` have only the
+  scaffold commit, so these were not shifted by a later edit; they appear to be
+  copied from the live repository's files.
+- **U-01's "resolved" is stronger than the evidence.** The mechanism is a code
+  reading; the 1,882 s T-0005 lease is shorter than the 884 s overrun it is meant
+  to explain. The stronger corroboration is already in the ledger: the
+  `FLEET_BLOCKED` retry bursts are **74 min 45 s apart** (02:43:02 → 03:57:47),
+  i.e. one full `conductor.tick()` + `dispatcher.tick()` cycle.
+- **G-02 is mis-cited.** U-07 cites G-02 for "small sample"; proposal G-02 is
+  "the merge queue can absorb overlap-driven conflicts". The small-sample caveat
+  has no register ID.
+- **The denial-rate definition is ambiguous.** Arm-0b's 14 `FLEET_BLOCKED` are
+  7 distinct (task, blocker) pairs; 2 are `already satisfied on main`, not scope
+  denials. Baseline-2's 24 are 16 `attempts_exhausted`, 4 `scope_overlap`, 4
+  precheck. The 64.9% headline is not the D-L6 denial rate; the scope-denial
+  rate is 4/37 = 10.8%.
+- **`FLEET_BLOCKED` does not match its D-A1 text.** `dispatcher.py:106-114` says
+  "once per (task, blocker) change", but `_start_backoff` resets `emitted` on
+  every failed start, so it re-emits per retry round.
+- **The Kernel-level scope refusal is silent.** `api.py:529` says every refusal
+  is recorded as `LEASE_REFUSED` (N-15), but the `scope_overlap` path at
+  `:553-557` raises without appending. The dispatcher's `FLEET_BLOCKED` is the
+  only record.
+- **OR-15's I13 limb is not enforced by the sentinel.** `STOP_INVARIANTS` is
+  `("I1", "I3", "I6", "I8'")`; I13 is checked but reported as a non-stopping
+  finding.
+- **REC-01 is listed as active in §9 and deferred in §13.1.** The REC table has
+  no status column. The §10 checklist also omits REC-10, REC-11 and REC-13;
+  REC-10 is the one Arm A needs to test OR-07/D-76.
+- **The merge queue is the proximate throughput limiter.** `drain_merge_queue`
+  is serial; Arm-0b's eight integrations took ~75 min (~9.3 min/card), and
+  baseline-2's three took ~44 min (~14.7 min/card). Raising `max_total_agents`
+  may raise width without raising throughput.
+- **Baseline-2 is not a seeded-only baseline.** 3 completions: 1 seeded
+  (`T-0018`), 2 gap-fill (`T-0031`, `T-0036`). The workload is 44 (20 seeded + 24
+  gap-fill). The freeze held for new cards (0 `TASK_CREATED`) but the gap-fill
+  backlog is still being worked.
+- **Baseline-2 had no requeue.** 0 `TASK_READY` in its window, so it is not
+  matched to Arm-0b under REC-17/D-79. Recorded as a deviation.
+- **The requeue has a cost.** Three of the eight requeued cards (T-0008, T-0009,
+  T-0011) were on attempt 3 of 3 and exhausted; the requeue burned their last
+  attempt. REC-17 should filter to cards with attempts remaining.
+
+### 14.3 Verdict
+
+The defect analysis in §1–§6 is sound and the six defect classes are real. The
+measurement claims are not yet authoritative: the three corrections above change
+the conflict baseline, the anomaly count and the cap-binding premise, and the
+denial-rate and width definitions need to be fixed before any arm is compared.
+
+**Conditions for a valid next arm**
+
+1. D-79 recorded (done, `pilot/decisions.md:812-816`).
+2. Conflict baseline corrected to 0/36 (done in §7.2).
+3. Width definition fixed: report the live-level distribution, not only the
+   max-held-≥60 s figure.
+4. Denial definition fixed: `scope_overlap` only; report `attempts_exhausted`
+   and precheck separately.
+5. Workload frozen and the seeded subset counted separately (REC-04).
+6. REC-10 implemented before Arm A (worker commit identity + provenance).
+7. Clean base: 0 active leases, sentinel and pins clean, card count recorded.
+8. Full gate green (re-run pending at the time of writing).
+9. Exactly one matched requeue per arm, with attempts-remaining filter (REC-17).
+10. Throughput divided by the measured window, with the overrun factor recorded
+    (REC-16/REC-12).
+
+**Assessor's note on the gate.** The full `pytest -q` run at the time of this
+assessment: **1,292 tests, all passed**. The gate is green; it is the measurement
+definitions, not the code, that block a valid arm.
