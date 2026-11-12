@@ -157,10 +157,30 @@ class Dispatcher:
                 "failures": state.failures,
                 "priority": profile.priority,
             })
+        # REC-03: a lease outlives its agent, so a slot count is not a
+        # concurrency count.  Arm-0b held 16 leases while only 10 agents were
+        # actually alive, and the difference was only found by accident
+        # (U-03).  Report the live count next to the slot count so the two can
+        # never again be confused.
+        live_runs = 0
+        stale_slots = 0
+        for run in self.runs.values():
+            try:
+                if spawn_mod.slot_alive(run.slot):
+                    live_runs += 1
+                else:
+                    stale_slots += 1
+            except Exception:                     # noqa: BLE001
+                stale_slots += 1
         return {
             "profiles": rows,
             "fleet_cap": self.max_total_agents(),
             "slots_in_use": len(self.runs),
+            "live_runs": live_runs,
+            "stale_slots": stale_slots,
+            "width_definition": ("WIDTH IS live_runs. slots_in_use counts slots/"
+                                 "leases, which outlive their agents and so "
+                                 "overstate concurrency (REC-03)."),
             "dispatch_paused": self.fleet_state.dispatch_paused,
             "pause_reason": self.fleet_state.pause_reason,
             "dispatch_owner": owner_status(
