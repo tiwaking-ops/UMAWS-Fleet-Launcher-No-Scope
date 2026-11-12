@@ -1,0 +1,333 @@
+---
+document:
+  title: "Incident and repair report — Arm-0 measurement failure and its remediation"
+  status: "Comprehensive incident report. Authoritative for what went wrong and what must change before further arms run. Authorises no further change by itself."
+  version: "1.0.0"
+  date: "2026-11-12"
+Author: "Tencent HY4 Preview, version tencent/hy4-preview-free (orcarouter)"
+provenance:
+  author_llm: {name: "Tencent HY4 Preview", version: "tencent/hy4-preview-free (orcarouter)"}
+  assessor_llm: []
+  created_date: "2026-11-12"
+  scope: "Toy repository C:\\temp\\projects\\umaws-noscope-toy only"
+authority_statement: "Analysis and recommendation record. It ratifies nothing and changes nothing; it is **unassessed** — no assessor_llm is recorded because the author cannot assess its own work. It is written for integration into the final overall report once all testing is complete."
+---
+
+# Incident and repair report — Arm-0 measurement failure
+
+## 0. Why this report exists
+
+The purpose is **prevention**. Across one baseline attempt, four separate
+classes of defect each independently produced numbers that looked like findings
+and were not. None of them breached integrity — the sentinel never fired and no
+invariant was violated — but three of them would have corrupted the experiment's
+primary comparison if they had gone uncaught. This document records what
+happened, what was measured after repair, and what must change so it does not
+recur.
+
+Classification chosen: **measurement and method failure**, with scaffolding and
+system defects as contributing causes. No integrity breach occurred. This is
+recorded as a **document, not a ledger `INCIDENT`**, deliberately: an `INCIDENT`
+event would land inside the log that Arm A is compared against and would corrupt
+metric 3 (conflict and incident rate) for every future arm.
+
+---
+
+## 1. Summary of what went wrong
+
+| # | Defect class | Specific defect | Consequence | Withdrawn or repaired |
+|---|---|---|---|---|
+| 1 | Method (mine) | Ran `pmk dispatch run` instead of `pmk project run` | Dispatcher alone cannot reach `DONE`; throughput reported as 0 | Two numbers **withdrawn** |
+| 2 | Scaffolding (mine) | Toy copy missing `coverage/rules_coverage.json` and `.githooks/pre-commit` | Global gate `pytest -q` failed on 4 pre-existing tests; **no card could reach `DONE` in any arm** | Repaired, commit `e8d278a` |
+| 3 | System (launcher) | `Kernel.task_ready()` exists but has **zero callers in `src`** | `REWORK` cards never return to `READY`; width stalled at 3 | Repaired by operator requeue; fix recommended (REC-01) |
+| 4 | Measurement (mine) | Width counted from leases, which outlive their agents | Reported 16 concurrency where 10 agents were live | Measured correctly; analyzer fixed, `8becbe1` |
+| 5 | Measurement (mine) | `--start/--end` filtered only lease intervals, not the counters | Headline counts described the whole log, not the window | Analyzer fixed, `8becbe1` |
+| 6 | Measurement (mine) | `TASK_DONE` treated as terminal; pipeline emits `INTEGRATED` | Printed `throughput 0.000` for a run that completed 3 cards | Analyzer fixed, `8becbe1` |
+
+---
+
+## 2. Defect 1 — the wrong supervision loop (withdrawn numbers)
+
+The baseline was run three times as `pmk dispatch run --seconds N`. That
+constructs and ticks **only the Dispatcher**. `cli.py:815` shows what runs all
+three components:
+
+```python
+dispatcher = Dispatcher(kernel, fleet_state, ...)
+overseer   = OverseerRunner(kernel, fleet_state)
+conductor  = Conductor(kernel, dispatcher, overseer)
+while time.time() < deadline:
+    conductor.tick()
+    dispatcher.tick()
+```
+
+The Conductor owns everything downstream of `SUBMITTED` (`conductor.py:673`):
+`drain_merge_queue()`, `reap_expired_leases()`, `advance()`. None exists on the
+Dispatcher-only path.
+
+**Two numbers were published from those runs and are withdrawn:**
+
+- "Throughput = 0 `DONE` per wall-hour" — an artefact of never running the merge
+  queue, not a property of the baseline.
+- "The fleet wedges permanently" — real, but self-inflicted: `reap_expired_leases()`
+  clears it, and I was running without the component that reaps.
+
+Full record: `docs/arm0-method-error-dispatch-vs-project-2026-11-12.md`.
+
+## 3. Defect 2 — the gate was red, so nothing could finish
+
+Cards are judged by the **global policy command**, `.pm/policy.toml:67` →
+`cmd = "pytest -q"`, not by the per-card `check.py` oracle. `pytest -q` failed on
+4 pre-existing tests, so every verified card came back `ORACLE_FAILED`.
+
+Two genuine scaffold defects, both absent from the toy copy and both tracked in
+the live repo:
+
+1. `coverage/rules_coverage.json` — a build artifact produced by
+   `python -m cna.tools.coverage`. Generating it fixed both
+   `test_rules_baseline` failures **and** `test_release_status`.
+2. `.githooks/pre-commit` — missing entirely, so `test_identity_guard` exited
+   127 (`No such file or directory`). Copied from the live repo.
+
+After repair, full `pytest -q` exits **0**. Committed as `e8d278a`, with both
+files tracked — matching the live repo's treatment — so they exist inside
+worktrees and merge directories.
+
+> **This defect blocked every card in every arm.** Throughput was unmeasurable
+> across the entire experiment until it was fixed.
+
+**Deliberately not done:** editing `.pm/policy.toml` to point the gate at the
+per-card oracle. That changes `policy_hash` and engages **I8'**, which under
+OR-15 aborts the arm immediately. The safe repair was to fix the artifacts.
+
+## 4. Defect 3 — recovery is implemented and never called
+
+Established in code, not inferred:
+
+- `Kernel.task_ready()` at `api.py:391` appends `TASK_READY`.
+- **Grep across `src` finds zero callers.** No fleet component, no CLI
+  subcommand ever moves a card back.
+- `models.py:46` permits `REWORK → READY`, and `api.py:401` describes REWORK as
+  returning a task "to READY for re-dispatch". The capability is implemented,
+  legal, documented — and dead.
+- `dispatcher.py:233` dispatches only `state.ready_tasks()`, so a `REWORK` card
+  is invisible until something requeues it. `recover.py:120` (L4) moves an
+  attempts-exhausted card to `BLOCKED`.
+
+**Measured effect.** Same configuration, operator action only, 8 `REWORK` cards
+returned to `READY` through the Kernel:
+
+| Metric | Arm-0 | Arm-0b (requeued) |
+|---|---|---|
+| tasks DONE | 3 | **10** |
+| Live sustained concurrency | 3 | **10** |
+| Throughput DONE/h | 5.55 | 6.14 |
+| Denial rate | 73.3 % | 38.9 % |
+| INCIDENT | 0 | 0 |
+
+**This is the single most important finding: throughput was bounded by failure
+recovery, upstream of anything the arm relaxations change.** Neither arm can be
+measured for width until this is fixed (REC-01).
+
+## 5. Defect 4 — width must be counted from live runs, not leases
+
+Lease concurrency for Arm-0b reports **16**. Live agent concurrency for the same
+window reports **10**:
+
+```
+peak concurrent    : 16        <- leases
+LIVE peak concurrent: 10       <- agents actually running
+LIVE sustained      : 10
+```
+
+Cause: a kernel lease outlives its agent. The run object leaves
+`dispatcher.self.runs` on exit (`:207`) while the lease survives, so leases count
+agents that have already exited. The overstatement here was **6**.
+
+Reporting 16 would have placed Arm-0 **inside OR-04's 12–20 target band** and
+wrongly implied the relaxations buy nothing. This also resolves an apparent
+contradiction in earlier records: the observation "15 leases under a cap of 10"
+is lease-based and true; it does **not** mean the cap is loose for live agents.
+
+### 5.1 Consequence: `max_total_agents` does bind
+
+Sustained live concurrency is **exactly 10**, equal to `max_total_agents = 10`.
+The ceiling therefore binds, and OR-04's 12–20 is unreachable without raising it.
+
+An earlier speculation of mine — that the cap might not bind and no amendment
+would be needed — **is withdrawn**; it relied on the lease-based figure.
+
+Correction to a still-earlier claim: I said `max_total_agents` "is named nowhere
+in §7.2". It **is** named there (line 198), in the warning "Do **not** rely on
+`max_total_agents` alone — profile `max_concurrent` is a second limiter". The
+precise gap is that the row instructs raising `max_concurrent` but never the
+ceiling itself.
+
+**Decision D-78 ratified by the operator 2026-11-12** (toy register, committed
+`b95fabb`): raise **both** — `max_total_agents` 10 → 20 and per-profile
+`max_concurrent` — revertible, toy-only, no `.pm/policy.toml` change so no I8'
+exposure; width verified by counting simultaneous live runs, per R-A4.
+
+## 6. Defect 5 and 6 — analyzer windowing and terminal event
+
+With `--start/--end` set, the counters still read the whole log:
+
+```
+window             : 85 of 539 events
+CLAIMED events     : 40      <- window actually contains 4
+FLEET_BLOCKED      : 55      <- window actually contains 11
+```
+
+Two fixes plus a denominator fix, committed `8becbe1`:
+
+1. The window is applied **once** to a filtered list that every counter reads.
+   Post-fix the counters reconcile exactly with a hand count of the window.
+2. Terminal is `INTEGRATED`, not `TASK_DONE` — this pipeline never emits
+   `TASK_DONE`. Counted as **distinct subjects** so a card emitting both is not
+   double-counted.
+3. Throughput divides by **arm wall time** when a window is given, not by an
+   implicit lease span inflated with idle time.
+
+---
+
+## 7. Additional measured findings
+
+### 7.1 Denials are not `LEASE_REFUSED`
+
+`LEASE_REFUSED` is **0** across the entire log, yet D-L6 demonstrably refuses
+claims. Denials are recorded as **`FLEET_BLOCKED` with
+`payload {"blocker": "scope_overlap"}`**. Using `LEASE_REFUSED` reports zero
+denials for a run full of them. In Arm-0b: 14 `FLEET_BLOCKED` — 12
+`scope_overlap` and 2 `already satisfied on main`.
+
+### 7.2 Conflicts occur with scope gating still on
+
+3 `QUARANTINED` events (T-0008, T-0009, T-0011), class `UNKNOWN`, paths under the
+repo root. **These are merge conflicts observed with gating enabled** — they give
+Arm A something concrete to be measured against.
+
+### 7.3 Workload drift: 20 → 34 cards
+
+All 14 new cards were created during the run by the Overseer under agent id
+`overseer-gap-fill`; 4 of them reached `DONE` (T-0021, T-0022, T-0025, T-0026).
+Throughput is therefore measured over an **expanding workload**, so Arm-0 and
+Arm-0b are not strictly the same workload. Must be frozen for a valid comparison
+(REC-04).
+
+### 7.4 Identity anomaly
+
+10 `IDENTITY_ANOMALY` events in Arm-0b (8 in Arm-0). Each worker commit was
+auto-pinned at stage `commit` from the effective identity
+`Tiwa Pene <tiwaking@gmail.com>` to the expected `umaws-pilot <umaws-pilot@localhost>`.
+Every card carries the pipeline identity, so **commits do not currently carry
+per-agent identity** — directly relevant to Arm A's worker-commit identity and
+provenance-trailer requirement (§7.2, D-76). Consistent with **D-67**: past
+attribution stays recorded and is not rewritten; the future-facing session that
+produced them remains **unknown**.
+
+### 7.5 Integrity held throughout
+
+`pmk sentinel` → `{"ok": true, "findings": []}`; `pmk pins check` →
+`{"ok": true, "mismatches": []}`. No **I1 / I8' / I13** violation, so **OR-15
+never fired**. For accuracy on naming: the sentinel prints `I8'`, which is **not
+a typo for I8** — `policy.py:131` defines `I8'` as "pinned files match their
+recorded hashes" and `sentinel.py:33` enforces it via `STOP_INVARIANTS`. OR-15's
+"I8" is the invariant the sentinel actually checks. My earlier suspicion of a
+missing check is withdrawn.
+
+### 7.6 Operator effort (metric 4)
+
+**0 interventions inside the Arm-0 window**; **1** (the requeue) before Arm-0b.
+Getting to that point cost roughly seven further actions — stopping the wrong
+loop, a `sweep`, diagnosing the gate, generating the coverage artifact,
+restoring the hook, committing, repairing the analyzer. All scaffolding repair,
+none of it coordination. Reporting effort without this qualifier would mislead.
+
+---
+
+## 8. Unresolved issues
+
+Each is stated with its evidence status; none is guessed at.
+
+| ID | Issue | Status |
+|---|---|---|
+| U-01 | A `--seconds 1800` run spanned **~97 minutes** (02:20:33Z → 03:58:13Z) | Cause not established. The measured window was used, not 0.5 h. **Do not assume `--seconds` bounds wall time.** |
+| U-02 | Whether `max_total_agents` still binds above width 10 once raised, or a third limiter appears | Must be measured in Phase 3 (recorded in D-78 as untested) |
+| U-03 | Whether the loose cap semantics admit more *leases* without admitting more *live agents* | Recorded in D-78 as untested; see REC-03 |
+| U-04 | Whether gap-fill cards are representative of the seeded workload | Unknown; drives REC-04 |
+| U-05 | Attribution of the commits behind `IDENTITY_ANOMALY` | **Unknown** session; D-67 stands |
+| U-06 | `QUARANTINED` conflicts classified `UNKNOWN` with root paths | Classification not diagnosed |
+| U-07 | Throughput rests on 10 completions over ~1 h (G-02) | Small sample; treat as indicative |
+| U-08 | No `SENTINEL_RUN` event occurs inside either window | "Clean during the run" is inferred from a post-run check, not in-run evidence |
+
+---
+
+## 9. Recommendations
+
+Tracked IDs for closure in the final overall report.
+
+| ID | Recommendation | Type | Prevents |
+|---|---|---|---|
+| **REC-01** | **Wire the requeue path**: have the Conductor call `Kernel.task_ready()` for `REWORK` cards (legal per `models.py:46`) and expose a CLI path (`pmk task ready`). The capability exists and is unused. | Code | Width stalling at 3; unmeasurable arms (defect 3) |
+| **REC-02** | **Measure width from `AGENT_STARTED`→`AGENT_EXITED`, never from leases.** Report lease and live figures side by side, and label which is authoritative. | Process | Reporting 16 for 10; false OR-04 pass (defect 4) |
+| **REC-03** | **Make the lease/live distinction visible in the product** — expose a live-run count in `pmk fleet status`, or emit an event when a lease outlives its agent, so the distinction cannot be rediscovered by accident. | Code | Silent width overstatement (U-03) |
+| **REC-04** | **Freeze the workload** for any comparative run: disable Overseer gap-fill, or count completions only against the seeded set. Record card count before and after every run. | Process | 20 → 34 drift; incomparable arms (defect 7.3) |
+| **REC-05** | **Preflight every arm on a clean base**: full gate green, and assert the presence of generated artifacts (`coverage/rules_coverage.json`) and tracked hooks (`.githooks/pre-commit`). Ship it as a runnable script. | Code + process | A red global gate silently blocking every card (defect 2) |
+| **REC-06** | **Use `pmk project run`, never `pmk dispatch run`**, for any run that must reach `DONE`. Add an explicit warning where `dispatch run` is offered. | Code + process | Throughput of 0 being read as a finding (defect 1) |
+| **REC-07** | **Window all metric analysis, and assert it**: the analyzer must verify that windowed counts reconcile with a raw count of the same window. Add that as a regression check. | Code | Counters reading the whole log (defect 5) |
+| **REC-08** | **Document that denial is `FLEET_BLOCKED{"blocker":"scope_overlap"}`**, not `LEASE_REFUSED`, which is always 0. Never report `LEASE_REFUSED` as a denial metric. | Process | A conflict metric with no denominator |
+| **REC-09** | **Never repair a failing gate by editing `.pm/policy.toml`.** Fix artifacts instead; a `policy_hash` change engages I8' and OR-15 aborts the arm. Codify as a standing warning. | Process | Self-inflicted integrity abort |
+| **REC-10** | **Give worker commits the acting agent's identity plus a provenance trailer** before Arm A runs — today every commit is pinned to the pipeline identity. | Code | Arm A's identity requirement being untestable (defect 7.4) |
+| **REC-11** | **Count `QUARANTINED` events into metric 3 explicitly**, with the exclusion of any deliberate `INCIDENT` record documented (as done here). | Process | Conflict rate being silently wrong |
+| **REC-12** | **Verify bounded runs actually bounded**: compare measured span against `--seconds` before quoting any per-hour figure. | Process | U-01 corrupting throughput denominators |
+| **REC-13** | **Apply D-78 and verify by counting**, not by assuming the configured value took effect (per R-A4). | Process | Raising a knob that was never the limiter |
+| **REC-14** | **Keep the terminal-event vocabulary correct**: this pipeline emits `INTEGRATED`; `TASK_DONE` is not emitted. Assert it where completions are counted. | Code | `throughput 0.000` for a run with 10 completions (defect 6) |
+
+---
+
+## 10. Agent preflight checklist
+
+An agent must satisfy every line before running any future arm. Each traces to a
+recommendation.
+
+1. **Isolation verified** — every call uses `--root <toy>` and `PYTHONPATH=<toy>\src`; nothing written to the live repository. (OR-01)
+2. **Gate green on a clean base** — full `pytest -q` exits 0, assertions of REC-05 pass. (REC-05)
+3. **Command correct** — the run that must reach `DONE` is `pmk project run`. (REC-06)
+4. **Workload frozen** — gap-fill disabled or completion counted against the seeded set; card count recorded before and after. (REC-04)
+5. **Width definition fixed** — live runs authoritative, lease figure reported alongside. (REC-02, REC-03)
+6. **Requeue path available** — known whether `REWORK` cards will be requeued automatically (REC-01) or manually by the operator, recorded either way. (REC-01)
+7. **Denial metric known** — `FLEET_BLOCKED` count, not `LEASE_REFUSED`. (REC-08)
+8. **Terminal event known** — `INTEGRATED`. (REC-14)
+9. **No `.pm/policy.toml` edit** — and if a policy change is ever considered, stop and escalate rather than proceed. (REC-09)
+10. **Bounded-run span checked** — measured window compared with `--seconds` before any per-hour figure is quoted. (REC-12)
+11. **Analysis windowed and reconciled** — windowed counts asserted against a raw count. (REC-07)
+12. **Operator interventions logged** — every manual action recorded, so metric 4 is honest. (§7.6)
+13. **Abort condition live** — any I1 / I8' / I13 violation ends the arm immediately; sentinel checked before and after. (OR-15)
+
+---
+
+## 11. Conclusion
+
+**The experiment remains valid, but only with fixes applied first.** The premise
+survives: unrelaxed Arm-0 reaches sustained **10** live concurrent agents, below
+OR-04's 12–20 band, so there is headroom for Arm A to demonstrate a difference
+and the test retains discriminating power. But that conclusion is only reachable
+after REC-01 (requeue), REC-02/03 (width measurement) and REC-04 (workload
+freeze) are in place. Without them an arm measures recovery behaviour and lease
+bookkeeping rather than the effect of removing write-scope gating — which is what
+the first Arm-0 attempt actually did.
+
+Nothing here ratifies a further change by itself. The one decision taken from
+this analysis, **D-78**, is separately ratified by the operator and recorded in
+the toy register.
+
+## 12. Referenced evidence
+
+- `docs/phase0-verification-2026-11-11.md` — D-01, D-02, O-01
+- `docs/phase1-workload-2026-11-11.md` — workload shape, oracle proof, D-L6 probe
+- `docs/baseline-correction-max-total-agents-2026-11-12.md` — `max_total_agents = 10` correction
+- `docs/arm0-method-error-dispatch-vs-project-2026-11-12.md` — defect 1; withdrawn numbers
+- `docs/arm0-evidence-green-run-2026-11-12.md` — defect 2 repair; Arm-0 metrics
+- `docs/arm0b-evidence-requeue-2026-11-12.md` — defects 3 and 4; Arm-0b metrics
+- `pilot/decisions.md` — D-75, D-76, D-77, **D-78** (toy-only)
+- Commits: `49ff873`, `534560d`, `e8d278a` (gate green), `8becbe1` (analyzer), `847bf41` (Arm-0b), `b95fabb` (D-78)
