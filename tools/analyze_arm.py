@@ -165,7 +165,20 @@ def main() -> int:
                    if e.type in ("INTEGRATED", "TASK_DONE")]
     # Count distinct cards, not events: a card that emits both must not
     # be counted twice.
+    # REC-14: assert the terminal vocabulary rather than trusting it.  This
+    # pipeline emits INTEGRATED; TASK_DONE is never emitted.  Treating
+    # TASK_DONE as terminal once printed throughput 0.000 for a run that had
+    # completed cards, and the error looked like a finding.
     done_tasks = sorted({e.subject for e in done_events if e.subject})
+    task_done_ct = types.get("TASK_DONE", 0)
+    integrated_ct = types.get("INTEGRATED", 0)
+    assert task_done_ct == 0, (
+        f"TASK_DONE emitted {task_done_ct}x in this window; this pipeline's "
+        f"terminal event is INTEGRATED. Either the vocabulary changed or a "
+        f"counter is reading the wrong event - resolve before quoting numbers.")
+    assert not done_tasks or integrated_ct > 0, (
+        f"{len(done_tasks)} tasks counted DONE but the window holds no "
+        f"INTEGRATED events")
     incidents = types.get("INCIDENT", 0)
     # REC-11: a merge conflict is recorded as QUARANTINED, not as INCIDENT.
     # Counting INCIDENT alone reported 0.0 for a window that held three real
@@ -204,6 +217,8 @@ def main() -> int:
     print(f"LEASE_REFUSED      : {refusals}")
     print(f"FLEET_BLOCKED      : {len(blocked)} {dict(blockers)}")
     print(f"claim attempts     : {attempts}")
+    print(f"terminal vocab     : OK - INTEGRATED x{integrated_ct},"
+          f" TASK_DONE x{task_done_ct} (expected 0)")
     print(f"tasks DONE         : {len(done_tasks)} {done_tasks}")
     print(f"INCIDENT           : {incidents}")
     print(f"QUARANTINED        : {quarantined}")
