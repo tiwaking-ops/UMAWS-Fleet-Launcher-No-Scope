@@ -3,6 +3,7 @@ vars: {}
 ---
 agent: tencent-hy4-preview
 model: tencent/hy4-preview-free (orcarouter)
+assessor_llm: opencode (baidu/ernie-5.5-flash-preview:free) - section 7 correction only
 ---
 
 # Arm A result record
@@ -133,3 +134,73 @@ operator, not something I should choose on my own:
 3. Accept that the comparison is not obtainable in this environment and stop.
 
 Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: A
+
+---
+
+## 7. Correction to §3(a): the terminal evidence does exist (independent, 2026-11-13)
+
+**Assessor:** opencode (`baidu/ernie-5.5-flash-preview:free`). This section
+corrects ground (a) only. It does not re-open the void: ground (b) is
+independent and, on the author's own evidence, sufficient on its own.
+
+**§3(a) is factually wrong.** It states "Nothing in the log records an ending:
+no `run_budget` line, no project status summary". Both exist — not in the ledger,
+but in the wrapper's stdout capture `tmp/arma.out` (1,162 bytes, mtime
+2026-11-13 00:25:13 +13:00 = **2026-11-12T11:25:13Z**):
+
+```
+run budget         : requested 1800s, measured 1052s, 24 ticks (last tick 780.6s)
+  stopped before starting a further tick that would have outlived the budget (REC-15).
+{
+  "state": "NEW",
+  "tasks": 44,
+  "tasks_done": 22,
+  "by_state": { "READY": 13, "DONE": 22, "REWORK": 1, "LEASED": 4,
+                "SUBMITTED": 2, "BLOCKED": 2 },
+  ...
+}
+```
+
+Three independent checks agree on the end time:
+
+- 1,052 s from the 11:07:41Z process start lands on **11:25:13Z** — the file's
+  own mtime.
+- The last ledger event is **11:25:12Z**, one second earlier, as expected when
+  the report is printed after the final tick.
+- The status JSON matches the post-run repo state exactly (44 tasks, 22 DONE,
+  13 READY, 1 REWORK, 4 LEASED, 2 SUBMITTED, 2 BLOCKED).
+
+**What this changes.**
+
+1. The program reached the end of its `try` block — `run_report_lines()` and then
+   `project_status()` — and its `finally`. That is a **normal completion**, not a
+   kill. The process's real end time is **11:25:12Z–11:25:13Z**, so a window
+   *could* be stated; the reason it should not be is (b), not the absence of an
+   end time.
+2. The run terminated **early, at 0.58 of budget**, because REC-15 declined to
+   start a further tick. That is the guard working as designed, and it means the
+   "Command timed out, exit code null" in §2 was the **wrapper's** timeout, not
+   the program's exit status. §2's wording — "my wrapper saw a timeout rather
+   than a return code" — is accurate; §3(a)'s inference from it is not.
+3. §3(a)'s supporting detail is also explained: of 9 `AGENT_STARTED`, 4 have no
+   `AGENT_EXITED` (T-0039, T-0040, T-0043, T-0020). Those agents were started
+   inside the final 780.6 s tick and were still running when the supervisor
+   stopped and exited. They were cut off **by the stop**, which is a consequence
+   of REC-15's granularity, not evidence that the process was killed.
+
+**What is not resolved.** Ground (b) — foreign conductors on the shared ledger —
+cannot be confirmed or refuted from the ledger now. The ledger shows no third
+`OVERSEER_WOKEN` (the two at 11:07:42Z and 11:11:04Z both follow Arm A's own
+incidents), 9 claims and 5 exits, and exactly one claim after 11:12:33Z
+(T-0020, 11:24:59Z), which is the shape a single conductor produces. That is
+consistent with (b) being wrong, but it is not proof: a second conductor that
+only renewed leases and hit the same scope refusals would leave little trace.
+Ground (b) therefore stands or falls on the author's 11:12:33Z / 11:13:32Z
+process-table observation, which is not re-verifiable after the fact.
+
+**Effect on the verdict: none.** Arm A remains void, on ground (b). What is
+withdrawn is the claim that no end time exists; what survives is that the shared
+ledger cannot attribute events to a run.
+
+**Effect on the stated metrics: none.** No throughput, denial or width figure is
+recorded here, and none should be derived from this run, for the reason in §4.
