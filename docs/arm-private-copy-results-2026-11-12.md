@@ -262,5 +262,82 @@ throughput in this pair will run far above the first pair's ~4-5 DONE/h and is
 
 ## 7. Re-run results
 
-Pending - control arm launched 2026-11-12T20:24:00Z, window to be reconstructed
-from its own ledger on completion.
+### 7.1 Control arm - cap 10
+
+Root `C:\temp\projects\toy-arm-cap10`. Launched **20:24:00Z**. Window
+reconstructed from its own ledger: first event **20:24:02Z**
+(`OVERSEER_WOKEN`), last **22:14:14Z** = **6612 s**, agreeing with the run's own
+report of 6613 s.
+
+**This arm overran its budget by x3.67** (6612 s measured against 1800 s
+requested), and one single tick consumed 5655 s of that - 86% of the entire
+window in one tick. The run emitted its own warning:
+
+```
+WARNING: one tick alone took 5655s, longer than the whole 1800s budget.
+No deadline logic can bound that - the conductor must be bounded
+(REC-15, unimplemented half).
+```
+
+```
+CLAIMED            : 25      (was 3 in the first pair)
+AGENT_STARTED      : 32
+AGENT_EXITED       : 25      -> 7 never exited
+INTEGRATED         : 9
+tasks DONE         : 9   T-0020, T-0045..T-0052
+LIVE peak          : 10
+LIVE sustained     : 10
+throughput         : 4.900 DONE/h
+denial             : 69.5%  (57 / 82 attempts)
+INCIDENT           : 0
+QUARANTINED        : 0
+sentinel findings  : []   (exit 0)
+```
+
+**The cap bound this arm, and this time it can be said precisely.** Concurrency
+was reconstructed stepwise from every `AGENT_STARTED`/`AGENT_EXITED` pair in the
+window (not from lease records, which are inflated by leases that were never
+released):
+
+```
+>=  2 concurrent :  98.5% of window
+>=  5 concurrent :  95.9%
+>=  8 concurrent :  93.7%
+>= 10 concurrent :  92.4%
+>= 11 concurrent :   0.0%     <- never exceeded the cap
+max concurrency  :  10
+```
+
+Width **never exceeded 10 and sat at 10 for 92.4% of the window**. That is the
+first clean evidence in this experiment that the cap is what sets width, and it
+is why the first pair was uninformative: with only 3 claimable cards the fleet
+could not reach 10 no matter what the ceiling was.
+
+Two things qualify it. First, 7 of 32 agents never exited, so lease-based
+concurrency reads 19 - the dispatcher limits *live runs* (`len(self.runs) >= cap`
+in `fleet/dispatcher.py:270`), while leases of dead agents linger; the stepwise
+figure above is the honest one. Second, the 4.900 DONE/h must not be read as an
+improvement over the first pair's 5.053: the cards here are trivially satisfiable
+and the denominators are wildly different.
+
+### 7.2 Third operator intervention - orphaned agents killed
+
+When the control conductor exited, **an agent tree outlived it**: `hermes.exe`
+(PID 18536) with a `python.exe` child (PID 10928) still working T-0067, plus a
+`cline.exe` hub daemon (PID 9740) bound to `toy-arm-cap10/work/T-0051-108`, all
+started during the window and still alive afterwards. This is the
+never-exited-agent pathology observed directly rather than inferred from counts.
+
+They were killed before the cap-20 arm launched, because agents left running into
+the next arm would contend for the machine and bias the throughput comparison
+the arms exist to make - and because they belong to an arm whose window had
+already closed. Recorded here as an intervention: it is a third one, beyond the
+requeue D-79 permits and beyond the card creation authorised in §6. Their being
+killed does not affect the cap-10 figures, which are window-bounded and were
+computed before the kill.
+
+### 7.3 Arm - cap 20
+
+Launched **22:19:05Z** from the identical normalised start state (DONE 24, READY
+44, claimable 28), after verifying no process was bound to either arm root.
+Result pending.
