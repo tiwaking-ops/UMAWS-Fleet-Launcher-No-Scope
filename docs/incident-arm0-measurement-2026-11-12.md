@@ -2,9 +2,9 @@
 document:
   title: "Incident and repair report — Arm-0 measurement failure and its remediation"
   status: "Comprehensive incident report. Authoritative for what went wrong and what must change before further arms run. Authorises no further change by itself."
-  version: "1.1.0"
+  version: "1.2.0"
   date: "2026-11-12"
-  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79)."
+  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79). v1.2.0 adds §9.1 implementation status for every REC, verified by measurement, and states REC-15's partial scope explicitly."
 Author: "Tencent HY4 Preview, version tencent/hy4-preview-free (orcarouter)"
 provenance:
   author_llm: {name: "Tencent HY4 Preview", version: "tencent/hy4-preview-free (orcarouter)"}
@@ -286,6 +286,38 @@ Tracked IDs for closure in the final overall report.
 | **REC-15** | **Make `--seconds` actually bound the run.** Test the deadline inside the tick loop, or bound the work a single `conductor.tick()` may perform, and warn when a run overruns its budget by more than a tick. As written the flag bounds only *when the next tick starts* (`cli.py:832-836`). | Code | A 30-minute budget becoming 97 minutes (U-01) |
 | **REC-16** | **Throughput divides by the measured window, never the configured budget.** Adopted by operator decision 2026-11-12 (D-79): 6.14 DONE/h, not 20.0 DONE/h. Apply to **every** arm without exception, and record the window bounds alongside every throughput figure. | Process | Two defensible denominators differing by 3.3x |
 | **REC-17** | **Requeue protocol for the duration of the experiment:** perform exactly **one** manual requeue per arm, at the same point (before launch), for **both** arms, and log it as an operator intervention. Do **not** enable automatic requeue until all arms are finished. | Process | Recovery becoming an unmatched confound between arms (see D-79) |
+
+### 9.1 Implementation status
+
+Every status below is **measured**, not assumed; each was verified by running
+the gate and a check designed to fail if the change were absent.
+
+| REC | Status | Commit | Verification |
+|---|---|---|---|
+| REC-01 | **Deferred** — toy-only D-79 holds it until all arms finish | — | Operator decision 2026-11-12; not overridden |
+| REC-02 | Implemented in the analyzer | analyzer commits, see `arm0b-evidence` output | Lease and live figures printed side by side: 22 leases vs 10 live |
+| REC-03 | Implemented | `7ba2f8c` | Injection test: 2 slots tracked → `live_runs` 1, `stale_slots` 1, `slots_in_use` 2 |
+| REC-04 | Implemented | `a9c9a34` | Contract strings `12-20`, `max_total_agents`, `tree root` all still present |
+| REC-05 | Implemented | `ac6f729` | Exit 0 clean; non-zero when pointed at the live repo |
+| REC-06 | Implemented | `a71b6c5` | Warning prints 5 lines; carried in `pmk dispatch --help`; cannot fire on `project run` |
+| REC-07 | Implemented | `a42f88b` | Reconciliation prints CLAIMED 22 window vs 62 whole log |
+| REC-10 | Implemented | `f250a16` | Real ledger: T-0007 → `hermes-solar-mini4`, T-0012 → `cline-solar-mini4` |
+| REC-11 | Implemented | `53d62fe` | Metric 3 went 0.0% → **13.6%** (3 QUARANTINED / 22 claims) |
+| REC-12 | Implemented | `0711799` | Arm-0b 5860 s measured vs 1800 s requested → ×3.26 OVERRAN |
+| REC-13 | **Applied, then reverted for the baseline** | `f1b2e7f` / `a7da80c` | Ceiling min(20,37)=20 when applied; restored to cap 10 so the new baseline is a true control |
+| REC-14 | Implemented | `4b16a0d` | Injected `TASK_DONE` raises AssertionError — guard is non-vacuous |
+| REC-15 | Implemented | `2c5568e` | Fake clock: old loop 202 s vs new 101 s on a 150 s budget |
+| REC-16 | Adopted as convention | D-79 | Throughput divides by measured window: 6.14 DONE/h, not 20.0 |
+| REC-17 | Adopted as protocol | D-79 | One matched requeue before each arm; baseline-2 requeue logged |
+
+**REC-15 is deliberately partial.** It makes `--seconds` bound the run by
+refusing to start a tick that would outlive the budget, and by not sleeping past
+the deadline. It does **not** bound the work a single `conductor.tick()` may
+perform — the deeper remedy the recommendation also names. That is a conductor
+redesign, not a loop change. The consequence is visible in the evidence: with
+coarse ticks a run can finish **early**, because budget too small for another
+tick is left unused (1800 s budget, 600 s ticks → stopped at 1202 s). That is
+the honest cost of not overrunning, and anyone sizing a future run needs it.
 
 ---
 
