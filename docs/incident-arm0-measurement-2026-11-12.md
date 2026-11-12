@@ -467,6 +467,33 @@ Integrity: `pmk sentinel` returned `findings: []`, exit 0 — **no OR-15 abort**
 
 ---
 
+### 9.4 Arm A (cap 20): void, not measured
+
+Arm A was launched 2026-11-12T11:07:40Z at the reinstated cap 20 and produced
+**no usable measurement**. It is void for two reasons, either sufficient.
+
+First, no terminal evidence exists: the wrapper reported a timeout with no exit
+code, the log holds no `run_budget` line, no project status, no merge events,
+and only 5 of 9 `AGENT_STARTED` have a matching `AGENT_EXITED`. Throughput needs
+a real end time and there isn't one.
+
+Second, and decisively, the window is contaminated by **two further
+`pmk project run` conductors started at 11:12:33Z and 11:13:32Z against this
+same repository while Arm A was being measured.** This is the same root cause as
+the 9.3 contamination that forced the withdrawal of 2.995 DONE/h, not a new one —
+which is the point. `--root` and `PYTHONPATH` isolate *which repository* a
+command addresses; they do nothing about concurrency. Task-agents in this
+environment independently run `pmk` against the toy repo as part of their own
+work, and a shared ledger cannot attribute events to a run. Width — the one
+metric this arm existed to measure — would have been a mixture of three runs.
+
+**No cap-20 arm has been measured.** The question D-78 raised is still open.
+Full detail in `docs/arma-result-record-2026-11-12.md`, including a correction
+to my own drafting of that record, and three options for making the comparison
+obtainable.
+
+---
+
 ## 10. Agent preflight checklist
 
 An agent must satisfy every line before running any future arm. Each traces to a
