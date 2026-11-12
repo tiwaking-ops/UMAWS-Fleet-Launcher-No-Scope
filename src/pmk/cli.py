@@ -629,8 +629,27 @@ def cmd_fleet_import_prompts(args) -> int:
     return 0
 
 
+def _warn_dispatch_run() -> None:
+    """REC-06: say plainly that this command cannot produce DONE cards."""
+    lines = [
+        "WARNING: `pmk dispatch run` dispatches cards but never integrates them.",
+        "  No card will reach DONE under this command, so throughput will be 0.",
+        "  That 0 is an artefact of the command, NOT a measurement.",
+        "  For any run whose metrics you intend to quote, use `pmk project run`.",
+        "  (Raise REC-06 if you genuinely want the dispatch loop alone.)",
+    ]
+    for line in lines:
+        print(line, file=sys.stderr)
+
+
 def cmd_dispatch_run(args) -> int:
     """Run the dispatch loop for a while (useful without the Console)."""
+    # REC-06: `dispatch run` dispatches cards but does NOT run the Conductor,
+    # so nothing is ever integrated and no card reaches DONE. It previously
+    # produced a throughput of 0 that was read as an experimental finding
+    # (defect 1). Warn unconditionally: any measured run must use
+    # `pmk project run`.
+    _warn_dispatch_run()
     from fleet.dispatcher import Dispatcher
     from fleet.owner import DispatchOwner, resume_dispatch
     kernel = _kernel(args)
@@ -1187,7 +1206,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     dispatch = sub.add_parser("dispatch", help="the dispatch loop") \
         .add_subparsers(dest="dispatch_command", required=True)
-    dispatch_run = dispatch.add_parser("run", help="run the dispatch loop")
+    dispatch_run = dispatch.add_parser(
+        "run",
+        help="run the dispatch loop (WARNING: never reaches DONE - use "
+             "`pmk project run` for anything you intend to measure; REC-06)")
     dispatch_run.add_argument("--seconds", type=float, default=30)
     dispatch_run.add_argument("--resume", action="store_true",
                              help="clear a persisted dispatch pause before running")
