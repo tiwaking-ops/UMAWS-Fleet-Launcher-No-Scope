@@ -358,6 +358,14 @@ QUARANTINED        : 0
 sentinel findings  : []   (exit 0)
 ```
 
+As with the control, agents outlived their conductor: a `cline.exe` hub daemon
+and a `kilo.exe` tree still executing task work were alive after the window
+closed, and were killed for the same reason as §7.2. The figures above are
+window-bounded and were computed independently of that cleanup, but the
+recurrence across both arms is itself evidence that the never-exited-agent
+pathology (6 of 33 here, 7 of 32 in the control) is structural rather than an
+artefact of one run.
+
 ### 7.4 Width: the cap decides it
 
 Concurrency reconstructed identically for both arms - stepwise from
