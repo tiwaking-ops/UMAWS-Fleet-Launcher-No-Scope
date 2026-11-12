@@ -399,46 +399,62 @@ so **no OR-15 abort** applied.
 
 ### 9.3 The baseline-2 re-run: valid, and it disagrees with Arm-0b
 
+> **CORRECTED per §14.4 (v1.3.1).** The figures originally published in this
+> section were wrong. I analysed window `09:48:04 → 10:48:10`, but the baseline
+> process exited at **10:32:50**; events from **10:44:42** onward belong to a
+> *different* `pmk project run` — a foreign conductor started by another task's
+> agent working in the same toy repository. It contributed 8 `CLAIMED` and 11
+> `FLEET_BLOCKED` (13 + 8 = 21 and 24 + 11 = 35, which were this section's
+> original pair). The cause of my error: I derived `--end` as *start plus a
+> guessed duration*, so the analyzer's "measured window" was echoing my own
+> input back to me rather than being read from the ledger. The values below are
+> recomputed against the true process window and independently reproduced.
+> **The 2.995 DONE/h figure in the original version is withdrawn.**
+
 Voiding the first attempt was the right call, because the replacement produced
 usable data. Launched 2026-11-12T09:48:04Z from `DONE 19 / READY 25 / 0 active
 leases` — no inherited SUBMITTED backlog, which was the single cause of the
-first run's collapse. It exited 0 after **21 ticks**, and the new REC-15 warning
-fired as designed (`one tick alone took 2675s, longer than the whole 1800s
-budget`).
+first run's collapse. It exited 0, and the new REC-15 warning fired as designed
+(`one tick alone took 2675s, longer than the whole 1800s budget`).
 
-| | Arm-0b (reference) | baseline-2 re-run |
+| | Arm-0b (reference) | baseline-2 re-run (corrected) |
 |---|---|---|
-| window (measured) | 5860 s | 3606 s (requested 1800, **OVERRAN ×2.00**) |
-| ticks | several | **21** |
-| AGENT_EXITED | present | **15** |
-| LIVE sustained | 10 | **10** |
+| window (measured) | 5860 s | **2684 s** (requested 1800, **OVERRAN ×1.49**) |
+| CLAIMED | 22 | **13** |
+| AGENT_STARTED / EXITED | — | **15 / 12** |
+| LIVE peak ≥60 s | 10 | **10** |
 | DONE | 10 | **3** |
-| throughput | 6.143 DONE/h | **2.995 DONE/h** |
-| denial | 38.9% | **62.5%** |
+| throughput | 6.143 DONE/h | **4.024 DONE/h** |
+| denial | 38.9% | **64.9%** (24/37) |
 | QUARANTINED | 3 | **0** |
 
-Two things this settles, and one it unsettles.
+Three things this settles, and one it unsettles.
 
-**Settled: the cap binds at 10, and it binds on live runs.** Both arms sustain
-exactly 10 concurrent live agents, independently. That is the measurement D-78
-was ratified on, now reproduced. The lease-based figure in the same window was
-12, so §5 is corroborated again in passing: leases overstate width.
+**Settled: both arms reach live width 10.** Reproduced independently. The
+lease-based figure in the same window was 12, so §5 is corroborated again:
+leases overstate width. **Qualified by §14.1:** "reach" is not "bind". Live
+level sat at 3 for 66% of this window and 10 for 25%; no `FLEET_BLOCKED` event
+names a fleet cap. Neither arm *sustained* 10 as a steady state.
 
-**Unsettled: this is not a replicate of Arm-0b, and the difference is large —
-2× on throughput, 1.6× on denial — despite identical width.** The most likely
-cause is that **Arm-0b's own headline number is contaminated by the same
-inherited-stock effect that voided the first baseline run.** The voided run
-produced 6 DONE from inherited SUBMITTED cards with essentially zero new work;
-if Arm-0b entered its window carrying similar stock, then part of its 10 DONE
-was not produced in its window either, inflating 6.14 DONE/h. This re-run is the
-only measurement so far that began with a genuinely empty merge queue, so
-**2.995 DONE/h is the cleanest throughput figure available**, and 6.143 should
-be treated as an upper bound pending re-derivation.
+**Settled, and it is a process finding rather than a fleet one: another task's
+agent was running `pmk project run` in this repository during my measurement.**
+Isolation for these arms is `PYTHONPATH` + `--root` only, which does nothing
+about a second process writing to the same `.pm` log. Every window computed
+here must therefore be reconstructed from the log and checked for foreign
+activity, not taken from wall-clock guesses.
 
-A secondary signal supports "the remaining cards are harder": 35 `FLEET_BLOCKED`
-in this window, of which **24 were `attempts_exhausted`** — agents repeatedly
+**Unsettled: still not a replicate of Arm-0b — 4.024 vs 6.143 DONE/h and 64.9%
+vs 38.9% denial.** The likely cause remains that **Arm-0b's headline number is
+contaminated by the inherited-stock effect that voided the first baseline
+run.** This run is the only measurement that began with a genuinely empty merge
+queue, so **4.024 DONE/h is the cleanest throughput figure available** and 6.143
+remains an upper bound pending re-derivation.
+
+A secondary signal supports "the remaining cards are harder": 24 `FLEET_BLOCKED`
+in this window, of which **16 were `attempts_exhausted`** — agents repeatedly
 failing to complete their cards, which suppresses throughput independently of
-width.
+width. Note that only 4 were `scope_overlap`, so §14.2's caution applies: this
+headline is not the D-L6 scope-denial rate, which is 4/37 = 10.8%.
 
 **Comparability caveat, stated because the analyzer raised it unprompted:**
 these two runs overran their budgets by different factors (×3.26 vs ×2.00).

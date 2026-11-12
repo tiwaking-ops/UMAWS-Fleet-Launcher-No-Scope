@@ -76,18 +76,38 @@ in Arm A's favour specifically when it does *not* reach 20.
 
 ## 3. Standing result for comparison
 
-Baseline-2 re-run (cap 10), window 2026-11-12T09:48:04Z - 10:48:10Z:
+Baseline-2 re-run (cap 10), window **2026-11-12T09:48:06Z - 10:32:50Z**:
 
 ```
-window (measured) : 3606 s  (requested 1800, OVERRAN x2.00)
-ticks             : 21
-AGENT_EXITED      : 15
-LIVE sustained    : 10
+window (measured) : 2684 s  (requested 1800, OVERRAN x1.49)
+CLAIMED           : 13
+AGENT_STARTED     : 15
+AGENT_EXITED      : 12
+LIVE peak (>=60s) : 10
+LIVE sustained    : level 3 for 66% of the window, 10 for 25%
+LEASED peak       : 12
 DONE              : 3
-throughput        : 2.995 DONE/h
-denial rate       : 62.5%
+throughput        : 4.024 DONE/h
+denial rate       : 64.9%  (24/37; scope-denial sub-rate 4/37 = 10.8%)
 QUARANTINED       : 0
 ```
 
 Full analysis in `docs/incident-arm0-measurement-2026-11-12.md` section 9.3,
 including the unresolved discrepancy against Arm-0b's 6.143 DONE/h.
+
+## 4. Window integrity - mandatory check for this arm
+
+The baseline window above is only correct *after* correction, and the cause is
+directly relevant to Arm A. My first analysis of it used window
+`09:48:04 - 10:48:10`, which ran 15 min past the process and silently absorbed
+8 `CLAIMED` and 11 `FLEET_BLOCKED` belonging to **another task's agent running
+`pmk project run` in this same repository** (see §14.4). That second process
+created the very 8 leases this record's "recovery" step later released.
+
+So isolation by `PYTHONPATH` + `--root` is **not** isolation from concurrency:
+anything that can write `.pm` shares the log. Arm A's window must therefore be
+reconstructed from the ledger against the process's actual start and exit, and
+checked for foreign activity, rather than taken from a wall-clock guess. The
+process was confirmed single at launch (only the `pmk.exe` shim and its
+re-exec'd child, PPID-verified), but that is a point-in-time check, not a
+guarantee for the whole window.
