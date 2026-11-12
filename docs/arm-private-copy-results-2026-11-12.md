@@ -1,8 +1,8 @@
 ---
 document:
   title: "Private-copy arm results: cap 10 vs cap 20"
-  status: "Control measured. Arm pending."
-  version: "1.0.0"
+  status: "First pair voided by poisoned supply. Second pair: control running."
+  version: "1.1.0"
 provenance:
   author_llm: {name: "Tencent HY4 Preview", version: "tencent/hy4-preview-free (orcarouter)"}
   assessor_llm: []
@@ -189,3 +189,78 @@ requeue D-79 permits per arm, so it is not done here; it is a decision for the
 operator. Note the confound that would remain even then: 22 of 44 cards are
 already DONE, so a wider fleet may still starve for tractable cards rather than
 reach 20.
+
+## 6. Second operator intervention - supply restored, then re-run
+
+The operator authorised: *reset the attempt counters in both copies and re-run
+both arms symmetrically*.
+
+### 6.1 What was actually done, and where it departs from the authorisation
+
+**The counters cannot be reset, and this is stated plainly because "reset" is
+what was approved.** `card.attempt` is not a stored field. It is a projection
+over the event log, incremented on every `CLAIMED` event
+(`src/pmk/state.py:137`):
+
+```python
+elif etype == "CLAIMED":
+    card.attempt = int(payload.get("attempt", card.attempt + 1))
+```
+
+Nothing decrements it. `TASK_READY` clears `block_reason` but not `attempt`, and
+no `pmk` verb - `task`, `queue`, `fleet`, `project` - exposes a reset. The only
+remaining routes were to rewrite `.pm` history by hand (forbidden: the Kernel is
+the only writer) or to give the fleet **new cards**, which start at attempt 0.
+
+The second route was taken. In each copy, identically and in the same order, 24
+cards were created through `pmk task create` (`T-0045`..`T-0068`), each with a
+write scope that does not yet exist, the standard oracle
+`python workload/check.py <file> TOY-OK`, `RESULT.md` as evidence, `attempts.max
+= 3`, and no dependence on any other card.
+
+So the operator's intent - restore dispatchable supply so the cap, not the
+queue, decides width - is met, but by **substitution rather than reset**. The 27
+cards carrying inherited exhaustion remain in the ledger, BLOCKED in both copies,
+and generate the same refusal noise in both. Their presence is symmetric and is
+left alone rather than voided, to keep the intervention minimal.
+
+### 6.2 Symmetry of the re-run start state
+
+Verified element-wise, not by comparing hash values: an earlier check printed a
+differing `ids hash` between the two copies, which was meaningless because
+Python salts string hashes per process. Compared directly instead:
+
+```
+same task id set  : True     (68 vs 68)
+state mismatches  : none
+attempt mismatches: none
+claimable equal   : True     cap10 = 27, cap20 = 27
+```
+
+Normalised per `docs/arm-isolation-private-copy-2026-11-12.md` §3: all 25 leases
+in each copy were already expired (no active lease to release), and the one task
+not `READY`/`DONE` was `T-0020` in **both**, moved to `READY` in both. Both then
+reported:
+
+```
+DONE 24, READY 44, claimable 28
+```
+
+28 claimable against a cap of 20 is a 1.4x supply ratio, and against a cap of 10
+is 2.8x. Supply now exceeds the ceiling in both arms, so any observed ceiling is
+the cap rather than the queue - the condition the first pair failed to meet.
+
+### 6.3 Third confound declared in advance
+
+24 of the 28 claimable cards are newly written toy cards whose oracle is "create
+a file containing `TOY-OK`". They are trivially satisfiable, so absolute
+throughput in this pair will run far above the first pair's ~4-5 DONE/h and is
+**not comparable to it**. The comparison that survives is cap 10 vs cap 20
+*within* this pair, where both arms face the same cards.
+
+---
+
+## 7. Re-run results
+
+Pending - control arm launched 2026-11-12T20:24:00Z, window to be reconstructed
+from its own ledger on completion.
