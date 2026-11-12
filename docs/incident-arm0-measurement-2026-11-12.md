@@ -306,7 +306,7 @@ the gate and a check designed to fail if the change were absent.
 | REC-12 | Implemented | `0711799` | Arm-0b 5860 s measured vs 1800 s requested → ×3.26 OVERRAN |
 | REC-13 | **Applied, then reverted for the baseline** | `f1b2e7f` / `a7da80c` | Ceiling min(20,37)=20 when applied; restored to cap 10 so the new baseline is a true control |
 | REC-14 | Implemented | `4b16a0d` | Injected `TASK_DONE` raises AssertionError — guard is non-vacuous |
-| REC-15 | Implemented | `2c5568e` | Fake clock: old loop 202 s vs new 101 s on a 150 s budget |
+| REC-15 | Implemented, then repaired | `2c5568e`, `ca442c8` | Fake clock: old loop 202 s vs new 101 s on a 150 s budget. **`2c5568e` alone was not sufficient** — see 9.2 |
 | REC-16 | Adopted as convention | D-79 | Throughput divides by measured window: 6.14 DONE/h, not 20.0 |
 | REC-17 | Adopted as protocol | D-79 | One matched requeue before each arm; baseline-2 requeue logged |
 
@@ -318,6 +318,62 @@ redesign, not a loop change. The consequence is visible in the evidence: with
 coarse ticks a run can finish **early**, because budget too small for another
 tick is left unused (1800 s budget, 600 s ticks → stopped at 1202 s). That is
 the honest cost of not overrunning, and anyone sizing a future run needs it.
+
+**The unimplemented half is not theoretical; it destroyed a measurement.** See
+9.2 for the run in which one tick alone consumed 3399.9 s of an 1800 s budget.
+
+### 9.2 The baseline-2 run: one tick, and a verification claim that was not earned
+
+The re-baseline run launched 2026-11-12T08:33:22Z with `--seconds 1800` and
+ended 09:30:02Z. Its own report line read:
+
+```
+run budget : requested 1800s, measured 3400s, 1 ticks (last tick 3399.9s)
+```
+
+Exactly **one** tick. The event log shows why that tick could not fit in any
+sane budget: `drain_merge_queue()` integrates every SUBMITTED/VERIFYING task
+serially, each running the full gate (~9 min), and the run inherited six
+leftover SUBMITTED cards. Roughly 53 minutes of serial gate work preceded
+`advance()`, which then dispatched five agents in the final 30 seconds
+(`AGENT_STARTED T-0035` 09:29:26Z, `T-0036` 09:30:02Z). The budget was gone, so
+every one of those agents died without exiting.
+
+| | Arm-0b (reference) | baseline-2 (crashed) |
+|---|---|---|
+| ticks | several, each overrunning | **1** |
+| AGENT_EXITED | present | **0** |
+| live sustained | 10 | **0** |
+| DONE | 10 | 6 — leftover backlog integrated in tick 1, not window work |
+
+**This run is void as a baseline.** Its six DONE are stock inherited from
+earlier work, not throughput produced in the window, and with zero
+`AGENT_EXITED` no width was ever sustained. It is reported here because a
+number that looks plausible (6.353 DONE/h) would otherwise enter the record.
+
+Two further faults, recorded separately because they are different in kind:
+
+1. **My verification claim was not earned.** I reported REC-15 as verified by a
+   green full gate. The suite was genuinely green and genuinely tested
+   `run_bounded` — and was worthless for the command that actually runs an arm.
+   The caller, `cmd_project_run`, referred to `skipped_final_tick` as a local
+   after the extraction had moved it into the returned dict, raising
+   `NameError` *after* 3400 s of completed work. Every test called the unit;
+   none called the caller. Fixed in `ca442c8` by moving the reporting into
+   `run_report_lines()` and asserting all four branches, including the exact
+   3399.9 s case, which now prints a warning naming the true cause instead of
+   raising. **The lesson generalises past this fix: a green suite over a unit
+   is not evidence about its caller.**
+2. **`pmk revoke` reports failure for work it performed.** Revoking the five
+   orphaned leases recorded `REVOKED` for all five (09:45:56Z–09:46:02Z) and
+   did release them, yet each returned `{"error": "no_lease"}` and exit 2. The
+   command appears to release the lease and then fail to read it back for its
+   own output. An operator trusting the exit code would conclude the revoke
+   failed and the slot was still occupied. Not one of the REC items; logged
+   here because it was hit in the course of this work and is unfixed.
+
+Integrity was intact throughout: `pmk sentinel` returned `findings: []`, exit 0,
+so **no OR-15 abort** applied.
 
 ---
 
