@@ -10,7 +10,7 @@ Throughput divides by the MEASURED window (REC-16), never by the requested
 budget; pass --requested-seconds to have the overrun flagged (REC-12).
 
 Usage:  python tools/analyze_arm.py [--arm NAME] [--start ISO] [--end ISO]
-                                    [--requested-seconds N]
+                                    [--requested-seconds N] [--root PATH]
 """
 
 import argparse
@@ -20,6 +20,15 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(r"C:\temp\projects\umaws-noscope-toy")
+
+# Private per-arm repository copies each carry their own ledger, so the root
+# cannot be fixed: analysing an arm copy against the original .pm silently
+# reports the wrong run (an empty window looks like zero throughput, not like
+# an error).  argparse is configured below, so peek at --root first.
+_peek = argparse.ArgumentParser(add_help=False)
+_peek.add_argument("--root", default=str(ROOT))
+_peek_args, _ = _peek.parse_known_args()
+ROOT = pathlib.Path(_peek_args.root)
 sys.path.insert(0, str(ROOT / "src"))
 
 from pmk.api import Kernel  # noqa: E402
@@ -32,6 +41,9 @@ def parse_ts(value: str) -> dt.datetime:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", default="ARM-0")
+    # Default reproduces the historical behaviour (the original toy repo).
+    ap.add_argument("--root", default=str(ROOT),
+                    help="repository copy whose ledger is analysed")
     ap.add_argument("--start", default="")
     ap.add_argument("--end", default="")
     # REC-12: the value actually passed to e.g. `pmk project run --seconds N`.
