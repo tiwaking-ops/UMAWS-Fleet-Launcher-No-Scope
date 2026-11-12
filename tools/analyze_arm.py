@@ -131,6 +131,12 @@ def main() -> int:
     # be counted twice.
     done_tasks = sorted({e.subject for e in done_events if e.subject})
     incidents = types.get("INCIDENT", 0)
+    # REC-11: a merge conflict is recorded as QUARANTINED, not as INCIDENT.
+    # Counting INCIDENT alone reported 0.0 for a window that held three real
+    # conflicts, so metric 3 silently under-reported.  Both are counted, and
+    # both are printed so the figure can never again hide its composition.
+    quarantined = types.get("QUARANTINED", 0)
+    conflicts = incidents + quarantined
     refusals = types.get("LEASE_REFUSED", 0)
     claimed = types.get("CLAIMED", 0)
 
@@ -164,6 +170,7 @@ def main() -> int:
     print(f"claim attempts     : {attempts}")
     print(f"tasks DONE         : {len(done_tasks)} {done_tasks}")
     print(f"INCIDENT           : {incidents}")
+    print(f"QUARANTINED        : {quarantined}")
     print(f"peak concurrent    : {peak}")
     print(f"LIVE peak concurrent: {live_peak}  (lease-based: {peak})")
     print(f"LIVE sustained      : {live_sustained}  (lease-based: {sustained})")
@@ -173,7 +180,9 @@ def main() -> int:
     print(f"denial rate %      : "
           f"{(len(blocked) / attempts * 100.0) if attempts else 0.0:.1f}")
     print(f"conflict+incident %: "
-          f"{(incidents / claimed * 100.0) if claimed else 0.0:.1f}")
+          f"{(conflicts / claimed * 100.0) if claimed else 0.0:.1f}"
+          f"   (= INCIDENT {incidents} + QUARANTINED {quarantined}"
+          f" over {claimed} claims)")
     print()
     print("lease intervals (task, held seconds):")
     for task, o, c in sorted(intervals, key=lambda x: x[1]):
