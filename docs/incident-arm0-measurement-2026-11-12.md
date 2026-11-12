@@ -2,8 +2,9 @@
 document:
   title: "Incident and repair report — Arm-0 measurement failure and its remediation"
   status: "Comprehensive incident report. Authoritative for what went wrong and what must change before further arms run. Authorises no further change by itself."
-  version: "1.0.0"
+  version: "1.1.0"
   date: "2026-11-12"
+  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79)."
 Author: "Tencent HY4 Preview, version tencent/hy4-preview-free (orcarouter)"
 provenance:
   author_llm: {name: "Tencent HY4 Preview", version: "tencent/hy4-preview-free (orcarouter)"}
@@ -251,7 +252,7 @@ Each is stated with its evidence status; none is guessed at.
 
 | ID | Issue | Status |
 |---|---|---|
-| U-01 | A `--seconds 1800` run spanned **~97 minutes** (02:20:33Z → 03:58:13Z) | Cause not established. The measured window was used, not 0.5 h. **Do not assume `--seconds` bounds wall time.** |
+| U-01 | A `--seconds 1800` run spanned **~97 minutes** (02:20:33Z → 03:58:13Z) | **RESOLVED v1.1.0.** Cause established at `cli.py:832-836`: the deadline is tested only at the top of each iteration, and one iteration runs a full `conductor.tick()` (merge drain, integration, per-card `pytest -q`) plus `dispatcher.tick()` plus `sleep(1)`, so the run overshoots by up to **one entire tick**. Corroborated by lease T-0005 held **1882 s (31.4 min)**, longer than the whole requested budget. `--seconds` therefore bounds nothing usefully. See REC-15. |
 | U-02 | Whether `max_total_agents` still binds above width 10 once raised, or a third limiter appears | Must be measured in Phase 3 (recorded in D-78 as untested) |
 | U-03 | Whether the loose cap semantics admit more *leases* without admitting more *live agents* | Recorded in D-78 as untested; see REC-03 |
 | U-04 | Whether gap-fill cards are representative of the seeded workload | Unknown; drives REC-04 |
@@ -282,6 +283,9 @@ Tracked IDs for closure in the final overall report.
 | **REC-12** | **Verify bounded runs actually bounded**: compare measured span against `--seconds` before quoting any per-hour figure. | Process | U-01 corrupting throughput denominators |
 | **REC-13** | **Apply D-78 and verify by counting**, not by assuming the configured value took effect (per R-A4). | Process | Raising a knob that was never the limiter |
 | **REC-14** | **Keep the terminal-event vocabulary correct**: this pipeline emits `INTEGRATED`; `TASK_DONE` is not emitted. Assert it where completions are counted. | Code | `throughput 0.000` for a run with 10 completions (defect 6) |
+| **REC-15** | **Make `--seconds` actually bound the run.** Test the deadline inside the tick loop, or bound the work a single `conductor.tick()` may perform, and warn when a run overruns its budget by more than a tick. As written the flag bounds only *when the next tick starts* (`cli.py:832-836`). | Code | A 30-minute budget becoming 97 minutes (U-01) |
+| **REC-16** | **Throughput divides by the measured window, never the configured budget.** Adopted by operator decision 2026-11-12 (D-79): 6.14 DONE/h, not 20.0 DONE/h. Apply to **every** arm without exception, and record the window bounds alongside every throughput figure. | Process | Two defensible denominators differing by 3.3x |
+| **REC-17** | **Requeue protocol for the duration of the experiment:** perform exactly **one** manual requeue per arm, at the same point (before launch), for **both** arms, and log it as an operator intervention. Do **not** enable automatic requeue until all arms are finished. | Process | Recovery becoming an unmatched confound between arms (see D-79) |
 
 ---
 
@@ -295,11 +299,11 @@ recommendation.
 3. **Command correct** — the run that must reach `DONE` is `pmk project run`. (REC-06)
 4. **Workload frozen** — gap-fill disabled or completion counted against the seeded set; card count recorded before and after. (REC-04)
 5. **Width definition fixed** — live runs authoritative, lease figure reported alongside. (REC-02, REC-03)
-6. **Requeue path available** — known whether `REWORK` cards will be requeued automatically (REC-01) or manually by the operator, recorded either way. (REC-01)
+6. **Requeue protocol fixed** — exactly **one** manual requeue before launch, at the matched point, for this arm and every arm it will be compared against; logged as an operator intervention. Automatic requeue stays **off** until all arms finish. (REC-17, D-79)
 7. **Denial metric known** — `FLEET_BLOCKED` count, not `LEASE_REFUSED`. (REC-08)
 8. **Terminal event known** — `INTEGRATED`. (REC-14)
 9. **No `.pm/policy.toml` edit** — and if a policy change is ever considered, stop and escalate rather than proceed. (REC-09)
-10. **Bounded-run span checked** — measured window compared with `--seconds` before any per-hour figure is quoted. (REC-12)
+10. **Bounded-run span measured** — the actual window is taken from the log, compared with `--seconds`, and **throughput is divided by the measured window** at 6.14 DONE/h convention, never by the configured budget. An overrun is recorded, not silently absorbed. (REC-12, REC-15, REC-16)
 11. **Analysis windowed and reconciled** — windowed counts asserted against a raw count. (REC-07)
 12. **Operator interventions logged** — every manual action recorded, so metric 4 is honest. (§7.6)
 13. **Abort condition live** — any I1 / I8' / I13 violation ends the arm immediately; sentinel checked before and after. (OR-15)
@@ -329,5 +333,42 @@ the toy register.
 - `docs/arm0-method-error-dispatch-vs-project-2026-11-12.md` — defect 1; withdrawn numbers
 - `docs/arm0-evidence-green-run-2026-11-12.md` — defect 2 repair; Arm-0 metrics
 - `docs/arm0b-evidence-requeue-2026-11-12.md` — defects 3 and 4; Arm-0b metrics
-- `pilot/decisions.md` — D-75, D-76, D-77, **D-78** (toy-only)
-- Commits: `49ff873`, `534560d`, `e8d278a` (gate green), `8becbe1` (analyzer), `847bf41` (Arm-0b), `b95fabb` (D-78)
+- `pilot/decisions.md` — D-75, D-76, D-77, **D-78**, **D-79** (toy-only)
+- Commits: `49ff873`, `534560d`, `e8d278a` (gate green), `8becbe1` (analyzer), `847bf41` (Arm-0b), `b95fabb` (D-78), `d135607` (this report v1.0.0)
+
+---
+
+## 13. Decisions taken arising from this report
+
+Recorded in the toy register as **D-79** (2026-11-12, ratified by the operator),
+following the options analysis above.
+
+**13.1 Requeue — option A adopted.** For the duration of the experiment the
+requeue stays **manual and matched**: exactly one requeue per arm, applied before
+launch, applied to **every** arm that will be compared, and logged as an operator
+intervention. Automatic requeue (wiring `Kernel.task_ready()` into the Conductor,
+REC-01) is **deferred until all arms are finished**.
+
+Reason: recovery was measured to be the dominant variable — one manual requeue
+moved live width 3 → 10 and completions 3 → 10 with no configuration change. A
+continuous automatic requeue in one arm and a single manual requeue in the other
+would confound the comparison, and any width gain would be attributable to
+recovery rather than to removing write-scope gating. The product fix and the
+experimental control therefore pull in opposite directions, and the experiment
+wins until the measurement is complete. Tracked as REC-17.
+
+**13.2 Throughput denominator — measured window adopted.** Throughput is
+**6.14 DONE/h** for Arm-0b, computed from the measured window (02:20:33Z →
+03:58:13Z, 1.6278 h). The configured-budget alternative of 0.5 h would give
+20.0 DONE/h and is **rejected as the reporting convention**; the two differ by
+3.3×. This convention applies to every arm without exception, and window bounds
+are recorded alongside every throughput figure. Tracked as REC-16.
+
+Note the convention does not by itself make arms comparable: if a later arm
+overruns by a materially different factor, the shared convention does not rescue
+the comparison. REC-12 therefore remains mandatory.
+
+**13.3 Still unresolved after these decisions.** U-02 through U-08 stand as
+listed in §8. U-01 is resolved as to cause but its *remedy* (REC-15) is not yet
+implemented, so every future run must still measure its own window rather than
+trust `--seconds`.
