@@ -153,6 +153,52 @@ def is_dirty(repo, path: Path) -> bool:
     return _dirty(repo, path)[0]
 
 
+def is_git_worktree(repo, path: Path) -> bool:
+    """True only when *path* is itself a work tree git can resolve.
+
+    ``git rev-parse --is-inside-work-tree`` is not enough: a plain directory
+    dropped inside ``work/`` sits *inside* the main checkout, so git answers
+    ``true`` for it too.  Comparing ``--show-toplevel`` to *path* means an
+    orphaned scratch directory (a stale merge tree whose repository is gone)
+    is correctly reported as not a worktree.
+    """
+    code, out, _err = repo.git("rev-parse", "--show-toplevel", cwd=path)
+    if code != 0:
+        return False
+    try:
+        top = Path(out.strip()).resolve()
+        target = Path(path).resolve()
+    except OSError:
+        return False
+    return os.path.normcase(str(top)) == os.path.normcase(str(target))
+
+
+def belongs_to_repo(repo, path: Path) -> bool:
+    """True when *path* is a worktree of **this** repository.
+
+    ``%TEMP%/pmk-merge-*`` is a *global* namespace: every project that uses
+    ``pmk`` creates its merge scratch there, and so does a concurrent test
+    run.  A tree is this repository's only when the worktree's common git
+    directory is this repository's ``.git``.  Nothing else may be reclaimed,
+    however stale it looks.
+    """
+    code, out, _err = repo.git("rev-parse", "--git-common-dir", cwd=path)
+    if code != 0:
+        return False
+    common = out.strip()
+    if not common:
+        return False
+    try:
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = Path(path) / common_path
+        ours = Path(repo.root) / ".git"
+        return (os.path.normcase(str(common_path.resolve()))
+                == os.path.normcase(str(ours.resolve())))
+    except OSError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # REC-02 -- capture (archive) before any reclaim
 # ---------------------------------------------------------------------------
@@ -323,7 +369,8 @@ def _claim_dest(root: Path, stem: str, *, limit: int = 1000) -> Path:
     raise CaptureError(f"no free archive destination for {stem!r}")
 
 
-def archive_tree(repo, state, path: Path, *, target_root: Path | None = None) -> dict:
+def archive_tree(repo, state, path: Path, *, target_root: Path | None = None,
+                 stem: str | None = None) -> dict:
     """Capture one worktree's uncommitted work (REC-02).
 
     Writes ``<root>/stranded/<task>-<fence>/`` containing:
@@ -349,8 +396,8 @@ def archive_tree(repo, state, path: Path, *, target_root: Path | None = None) ->
     try:
         base, diff, untracked, ignored = _scan_tree(repo, path)
         hasher = _new_digest(diff)
-        dest = _claim_dest(root, (f"{task_id}-{fence}" if fence is not None
-                                  else path.name))
+        dest = _claim_dest(root, stem or (f"{task_id}-{fence}"
+                                          if fence is not None else path.name))
     except (CaptureError, OSError) as exc:
         return dict(failed, reason=str(exc))
 
@@ -737,9 +784,21 @@ def _unverifiable_processes(processes: list[dict]) -> list[dict]:
     return [p for p in processes if p.get("pid") is None]
 
 
-def _deletion_refusal(repo, state, path: Path) -> str:
-    """H1: only a direct, unprotected lease worktree with no live lease."""
-    root = worktree_root(repo)
+def _deletion_refusal(repo, state, path: Path, *, allow_scratch: bool = False,
+                      root: Path | None = None) -> str:
+    """H1: only a direct, unprotected worktree with no live lease.
+
+    *root* is the container whose direct children may be reclaimed; by
+    default the lease worktree root (``<repo>/work``).  A scratch prune
+    passes the parent of a merge tree instead.
+
+    *allow_scratch* additionally permits a directory whose name is **not**
+    ``<task>-<fence>`` -- the canary/gate/merge scratch trees the fleet
+    leaves behind and the lease-only rule refuses.  Such a tree holds no
+    lease, so the active-lease guard cannot apply to it; the protected-name
+    and containment checks still do.
+    """
+    root = Path(root) if root is not None else worktree_root(repo)
     try:
         root_resolved = root.resolve()
         target_resolved = path.resolve()
@@ -751,10 +810,17 @@ def _deletion_refusal(repo, state, path: Path) -> str:
         return "not a direct child of the worktree root"
     task_id, fence = parse_name(path.name)
     if fence is None:
-        return "not a lease worktree name"
+        if not allow_scratch:
+            return "not a lease worktree name"
+        return ""
     if state is None:
         return "no Kernel state; cannot prove the lease is inactive"
-    lease = state.leases.get(task_id)
+    # Only an *active* lease may refuse reclamation.  ``state.leases`` can
+    # still hold an entry for a task that has left ACTIVE_STATES (for example
+    # after PREMISE_REFUTED), and reading that raw table made a finished
+    # task's worktree permanently unreclaimable; the active set is the
+    # authority on what is still held.
+    lease = state.active_leases().get(task_id)
     if lease is not None and lease.fence == fence:
         return "an active lease still owns this worktree"
     task = state.tasks.get(task_id)
@@ -765,7 +831,11 @@ def _deletion_refusal(repo, state, path: Path) -> str:
 
 def reclaim_after_capture(repo, state, path: Path, *,
                           target_root: Path | None = None,
-                          extra_processes: list[dict] | None = None) -> dict:
+                          extra_processes: list[dict] | None = None,
+                          allow_scratch: bool = False,
+                          root: Path | None = None,
+                          stem: str | None = None,
+                          remove_parent: bool = False) -> dict:
     """REC-01: capture a worktree, verify it, prove quiescence, remove it.
 
     This is the **only** function that deletes a worktree.  It never
@@ -781,6 +851,15 @@ def reclaim_after_capture(repo, state, path: Path, *,
       capture the tree is digested again, so anything that wrote to it
       while it was being captured keeps it on disk.
 
+    A **scratch** reclaim (``allow_scratch=True``) extends this to a
+    directory the lease path refuses: a non-lease name under *root*, or a
+    ``%TEMP%/pmk-merge-*`` tree.  Such a directory is still protected-name
+    and containment checked, still captured and verified, and must still be
+    a git worktree -- so it is only ever a tree this repository can prove it
+    owns.  ``stem`` names its archive, and ``remove_parent`` drops the
+    now-empty parent (a ``pmk-merge-*`` directory around a ``merge``
+    worktree).
+
     Returns a result dict; ``reclaimed`` is true only when the worktree
     was actually removed.
     """
@@ -793,7 +872,8 @@ def reclaim_after_capture(repo, state, path: Path, *,
     # H1: never delete a protected path, a path outside work/, or a tree
     # whose lease is still active.  This is checked before any archive or
     # lock work, so a refusal leaves no side effects.
-    refusal = _deletion_refusal(repo, state, path)
+    refusal = _deletion_refusal(repo, state, path, allow_scratch=allow_scratch,
+                                root=root)
     if refusal:
         result["reason"] = refusal
         return result
@@ -827,7 +907,15 @@ def reclaim_after_capture(repo, state, path: Path, *,
             result["processes"] = busy
             return result
 
-        capture = archive_tree(repo, state, path, target_root=target_root)
+        if not is_git_worktree(repo, path):
+            # A scratch tree that is not a git worktree has no base commit
+            # and no verifiable restore, so it is never deleted -- and it is
+            # never another repository's tree either: reclaim only ever
+            # touches a worktree this repository can prove it owns.
+            result["reason"] = "not a git worktree"
+            return result
+        capture = archive_tree(repo, state, path, target_root=target_root,
+                               stem=stem)
         if not capture.get("archived"):
             result["reason"] = (f"capture failed: "
                                 f"{capture.get('reason', 'unknown')}")
@@ -872,9 +960,56 @@ def reclaim_after_capture(repo, state, path: Path, *,
                                 f"{(err.strip() or out.strip())}")
             return result
         result["reclaimed"] = True
-        return result
     finally:
         _release_lock(lock)
+    # Runs after the lock is released, so the lock file is not itself the
+    # thing that stops the parent directory from being empty.
+    if result["reclaimed"] and remove_parent:
+        _remove_empty_parent(path, result)
+    return result
+
+
+def _remove_empty_parent(path: Path, result: dict) -> None:
+    """After a scratch reclaim, drop the parent when it is now empty.
+
+    A ``%TEMP%/pmk-merge-*`` directory normally holds only its ``merge``
+    worktree, so once that worktree is reclaimed the parent is empty.  Any
+    remaining entry is kept and reported rather than deleted.
+    """
+    parent = path.parent
+    try:
+        leftovers = sorted(p.name for p in parent.iterdir())
+    except OSError:
+        return
+    if leftovers:
+        result["parent_kept"] = leftovers[:20]
+        return
+    try:
+        parent.rmdir()
+        result["parent_removed"] = True
+    except OSError as exc:
+        result["parent_note"] = f"empty parent not removed: {exc}"
+
+
+def discover_merge_trees(temp_root: Path | str | None = None) -> list[dict]:
+    """Report scratch merge worktrees under ``%TEMP%/pmk-merge-*``.
+
+    Read-only discovery: the trees are listed for operator visibility but never
+    removed by :func:`prune`.
+    """
+    root = Path(temp_root) if temp_root is not None else Path(tempfile.gettempdir())
+    if not root.is_dir():
+        return []
+    found: list[dict] = []
+    for path in sorted(root.glob("pmk-merge-*")):
+        try:
+            if not path.is_dir():
+                continue
+            found.append({"name": path.name, "path": str(path),
+                          "bytes": dir_bytes(path)})
+        except OSError:
+            continue
+    return found
 
 
 def prune(repo, state, *, dry_run: bool = True,
@@ -902,10 +1037,14 @@ def prune(repo, state, *, dry_run: bool = True,
     and is re-checked against its capture before ``git worktree remove``.
     A tree ``git status`` calls clean can still hold ignored files, so it
     is captured too rather than deleted on the strength of that status.
+
+    Scratch merge trees under ``%TEMP%/pmk-merge-*`` are reported in
+    ``merge_trees`` for visibility and are never removed here.
     """
     recs = records(repo, state)
     candidates: list[dict] = []
     skipped: list[dict] = []
+    merge_trees = discover_merge_trees()
 
     for r in recs:
         if r["fence"] is None:
@@ -958,4 +1097,272 @@ def prune(repo, state, *, dry_run: bool = True,
         "counts": {"candidates": len(candidates), "removed": len(removed),
                    "archived": len(archived), "skipped": len(skipped)},
         "recoverable_bytes": sum(c["bytes"] for c in candidates),
+        "merge_trees": merge_trees,
     }
+
+
+# ---------------------------------------------------------------------------
+# Scratch trees -- the non-lease worktrees the fleet leaves behind
+# ---------------------------------------------------------------------------
+
+def scratch_records(repo, state) -> list[dict]:
+    """Directories under ``work/`` whose name is not ``<task>-<fence>``.
+
+    These are the canary and gate worktrees (``gate-*``, ``H1-H4-*``,
+    ``launcher-repair-*``): real git worktrees, but not leases, so the
+    lease-only :func:`prune` refuses them by name.
+    """
+    return [record(repo, state, p) for p in iter_dirs(repo)
+            if parse_name(p.name)[1] is None]
+
+
+def merge_tree_records(temp_root: Path | str | None = None) -> list[dict]:
+    """Every ``%TEMP%/pmk-merge-*`` directory, with the worktree it holds.
+
+    ``age_days`` is the parent directory's mtime, so a prune can refuse to
+    race a merge that is still in flight.
+    """
+    out: list[dict] = []
+    for tree in discover_merge_trees(temp_root):
+        parent = Path(tree["path"])
+        worktree = parent / "merge"
+        try:
+            age = (time.time() - parent.stat().st_mtime) / 86400.0
+        except OSError:
+            age = None
+        out.append({"name": parent.name,
+                    "path": str(parent),
+                    "merge": str(worktree) if worktree.is_dir() else "",
+                    "has_worktree": worktree.is_dir(),
+                    "age_days": round(age, 3) if age is not None else None,
+                    "bytes": tree["bytes"]})
+    return out
+
+
+def discover_precheck_trees(temp_root: Path | str | None = None) -> list[dict]:
+    """Report ``%TEMP%/pmk-precheck-dry-*`` directories and their worktrees.
+
+    A precheck dry run adds **two** worktrees -- ``base`` and ``scratch`` --
+    inside one throwaway directory, so this class is reported per directory
+    with the worktrees it still holds.  ``age_days`` is the directory's
+    mtime, so a prune can refuse to race a precheck that is still running.
+    """
+    root = Path(temp_root) if temp_root is not None else Path(tempfile.gettempdir())
+    if not root.is_dir():
+        return []
+    out: list[dict] = []
+    for parent in sorted(root.glob("pmk-precheck-dry-*")):
+        try:
+            if not parent.is_dir():
+                continue
+            age = (time.time() - parent.stat().st_mtime) / 86400.0
+        except OSError:
+            continue
+        out.append({"name": parent.name,
+                    "path": str(parent),
+                    "worktrees": [sub for sub in ("base", "scratch")
+                                  if (parent / sub).is_dir()],
+                    "age_days": round(age, 3),
+                    "bytes": dir_bytes(parent)})
+    return out
+
+
+def prune_scratch(repo, state, *, dry_run: bool = True,
+                  target_root: Path | None = None,
+                  temp_root: Path | str | None = None,
+                  include_work: bool = True,
+                  include_merge: bool = True,
+                  include_precheck: bool = False,
+                  min_merge_age_days: float = 1.0,
+                  min_precheck_age_days: float = 1.0) -> dict:
+    """Reclaim the non-lease scratch trees the fleet leaves behind.
+
+    Three classes, all of which the lease-only :func:`prune` refuses:
+
+    * a directory under ``work/`` whose name is not ``<task>-<fence>``
+      (a canary or gate tree);
+    * a ``%TEMP%/pmk-merge-*`` tree **that is a worktree of this
+      repository**; and
+    * a ``%TEMP%/pmk-precheck-dry-*`` directory **whose ``base`` and
+      ``scratch`` worktrees are worktrees of this repository**.
+
+    ``%TEMP%`` is a global namespace -- every project using ``pmk``, and
+    every concurrent test run, creates its scratch there -- so a merge or
+    precheck tree is a candidate only when ``belongs_to_repo`` proves the
+    worktree is ours, and only when it is at least the class's age
+    threshold old.  Everything else is reported in ``skipped`` and left
+    alone: a stale-looking tree that is not provably ours is another
+    project's, and a fresh one may still be in flight.
+
+    Dry-run by default.  Every removal goes through
+    :func:`reclaim_after_capture`, so each tree is captured (REC-02) and the
+    capture verified before anything is deleted.  A scratch directory is
+    removed in full only once its worktrees are gone and nothing else
+    remains in it.
+    """
+    root = Path(target_root) if target_root else archive_root(repo)
+    candidates: list[dict] = []
+    skipped: list[dict] = []
+
+    if include_work:
+        for rec in scratch_records(repo, state):
+            path = Path(rec["path"])
+            if not is_git_worktree(repo, path):
+                skipped.append({"name": path.name, "kind": "work",
+                                "reason": "not a git worktree",
+                                "reclaimed": False})
+                continue
+            candidates.append({"name": path.name, "kind": "work",
+                               "path": path, "extra": {}})
+
+    if include_merge:
+        for rec in merge_tree_records(temp_root):
+            parent = Path(rec["path"])
+            name = parent.name
+            if not rec["has_worktree"]:
+                skipped.append({"name": name, "kind": "merge", "reclaimed": False,
+                                "reason": "no merge worktree; ownership "
+                                          "cannot be proven"})
+                continue
+            if not belongs_to_repo(repo, Path(rec["merge"])):
+                skipped.append({"name": name, "kind": "merge", "reclaimed": False,
+                                "reason": "not a worktree of this repository"})
+                continue
+            age = rec.get("age_days")
+            if age is not None and age < min_merge_age_days:
+                skipped.append({"name": name, "kind": "merge", "reclaimed": False,
+                                "reason": f"younger than {min_merge_age_days} d; "
+                                          "a merge may be in flight"})
+                continue
+            candidates.append({"name": name, "kind": "merge",
+                               "path": parent / "merge",
+                               "extra": {"root": parent, "remove_parent": True}})
+
+    if include_precheck:
+        for rec in discover_precheck_trees(temp_root):
+            parent = Path(rec["path"])
+            name = parent.name
+            subs = rec["worktrees"]
+            if not subs:
+                skipped.append({"name": name, "kind": "precheck",
+                                "reclaimed": False,
+                                "reason": "no precheck worktree; ownership "
+                                          "cannot be proven"})
+                continue
+            age = rec.get("age_days")
+            if age is not None and age < min_precheck_age_days:
+                skipped.append({"name": name, "kind": "precheck",
+                                "reclaimed": False,
+                                "reason": f"younger than "
+                                          f"{min_precheck_age_days} d; a "
+                                          "precheck may be in flight"})
+                continue
+            for index, sub in enumerate(subs):
+                worktree = parent / sub
+                if not belongs_to_repo(repo, worktree):
+                    skipped.append({"name": name, "worktree": sub,
+                                    "kind": "precheck", "reclaimed": False,
+                                    "reason": "not a worktree of this "
+                                              "repository"})
+                    continue
+                # The directory goes once its *last* worktree is gone, so a
+                # failed reclaim leaves the other one visible rather than
+                # deleting a directory that still holds it.
+                candidates.append({"name": name, "kind": "precheck",
+                                   "worktree": sub,
+                                   "stem": f"{name}-{sub}",
+                                   "path": worktree,
+                                   "extra": {
+                                       "root": parent,
+                                       "remove_parent": index == len(subs) - 1}})
+
+    removed: list[dict] = []
+    if not dry_run:
+        for cand in candidates:
+            outcome = reclaim_after_capture(repo, state, cand["path"],
+                                            target_root=root, allow_scratch=True,
+                                            stem=cand.get("stem") or cand["name"],
+                                            **cand["extra"])
+            entry = {"name": cand["name"], "kind": cand["kind"],
+                     "path": str(cand["path"]),
+                     "reclaimed": bool(outcome.get("reclaimed")),
+                     "archive": outcome.get("archive", ""),
+                     "reason": outcome.get("reason", "")}
+            if cand.get("worktree"):
+                entry["worktree"] = cand["worktree"]
+            if outcome.get("reclaimed"):
+                removed.append(entry)
+            else:
+                skipped.append(entry)
+
+    return {
+        "dry_run": dry_run,
+        "include_work": include_work,
+        "include_merge": include_merge,
+        "include_precheck": include_precheck,
+        "min_merge_age_days": min_merge_age_days,
+        "min_precheck_age_days": min_precheck_age_days,
+        "candidates": [c["name"] for c in candidates],
+        "removed": removed,
+        "skipped": skipped,
+        "counts": {"candidates": len(candidates), "removed": len(removed),
+                   "skipped": len(skipped)},
+    }
+
+
+def reclaim_path(repo, state, path: Path, *, dry_run: bool = True,
+                 target_root: Path | None = None) -> dict:
+    """Plan, then perform, the capture-first reclaim of **one named path**.
+
+    The scratch classes discover their own candidates; this is the surface
+    for a path an operator names -- the traceability gap this incident
+    found, where reclaiming six worktrees had to be scripted and so
+    recorded no event.
+
+    Dry-run by default: the plan says what would happen and writes nothing.
+    The applied path goes through :func:`reclaim_after_capture`, so the
+    tree is still captured, verified, restore-proved and re-digested
+    before git removes it.
+
+    A path is reclaimable only when it is provably a worktree **of this
+    repository**: a plain directory, another project's worktree, the main
+    checkout and a protected name are all refused, with the reason
+    reported rather than acted on.
+    """
+    path = Path(path)
+    root = Path(target_root) if target_root else archive_root(repo)
+    result: dict = {"path": str(path), "name": path.name,
+                    "reclaimed": False, "dry_run": dry_run}
+    if not path.is_dir():
+        result["reason"] = "not on disk"
+        return result
+    try:
+        if path.resolve() == Path(repo.root).resolve():
+            result["reason"] = "the main checkout is never reclaimed"
+            return result
+    except OSError as exc:
+        result["reason"] = f"cannot resolve the path: {exc}"
+        return result
+    if path.name in PROTECTED:
+        result["reason"] = f"{path.name} is protected; refusing to delete it"
+        return result
+    if not is_git_worktree(repo, path):
+        result["reason"] = "not a git worktree"
+        return result
+    if not belongs_to_repo(repo, path):
+        result["reason"] = "not a worktree of this repository"
+        return result
+    result["bytes"] = dir_bytes(path)
+    result["dirty"] = _dirty(repo, path)[0]
+    if dry_run:
+        result["plan"] = (f"would capture {path.name} into {root} and remove "
+                          "it if the capture verifies")
+        return result
+
+    outcome = reclaim_after_capture(repo, state, path, target_root=root,
+                                    allow_scratch=True, root=path.parent,
+                                    stem=path.name)
+    result["reclaimed"] = bool(outcome.get("reclaimed"))
+    result["archive"] = outcome.get("archive", "")
+    result["reason"] = outcome.get("reason", "")
+    return result

@@ -13,62 +13,48 @@ config enables it.
 
 from __future__ import annotations
 
-import os
-import shutil
-import stat
-import tempfile
 from pathlib import Path
+
+from . import scratch
 
 __all__ = ["dry_run", "oracles_already_pass"]
 
 
-def _remove_scratch(path: Path) -> bool:
-    """Remove *path* whole, clearing read-only bits first.  True when gone."""
-    path = Path(path)
-    if not path.exists():
-        return True
-    # Deepest-first, files and directories: git leaves read-only files on
-    # Windows, and a read-only directory blocks its own removal.
-    for parent, dirs, files in os.walk(path, topdown=False):
-        for name in files + dirs:
-            try:
-                os.chmod(os.path.join(parent, name), stat.S_IWRITE)
-            except OSError:
-                pass
-    try:
-        os.chmod(path, stat.S_IWRITE)
-    except OSError:
-        pass
-    try:
-        shutil.rmtree(path)
-    except OSError:
-        pass
-    return not path.exists()
-
-
-def oracles_already_pass(kernel, task, *, timeout: int = 600) -> tuple[bool, list[dict]]:
+def oracles_already_pass(kernel, task, *, timeout: int = 600,
+                         temp_root: Path | str | None = None
+                         ) -> tuple[bool, list[dict]]:
     """Return ``(all_passed, results)`` for *task*'s oracles on the base.
 
     ``all_passed`` is False when the check could not run, so a broken
     precheck can never suppress real work.
+
+    *temp_root* places the throwaway directory under a caller-owned root
+    (a pytest-managed ``tmp_path`` in tests); see :mod:`fleet.scratch`.
     """
     # Imported here: harness imports this module from ``start``; a module-level
     # import would close the cycle.
     from .harness import run_command
+    from .runenv import import_origin_problems
 
     repo = kernel.repo
     oracles = list(getattr(task, "oracles", []) or [])
     if not oracles:
         return False, []
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="pmk-precheck-"))
+    temp_dir = scratch.scratch_dir("pmk-precheck-", temp_root)
     worktree = temp_dir / "tree"
-    results: list[dict] = []
     try:
         code, out, err = repo.git("worktree", "add", "--detach", str(worktree),
                                   repo.default_branch())
         if code != 0:
             return False, [{"error": f"precheck worktree: {(err or out).strip()}"}]
+
+        results: list[dict] = []
+        origin_problems = import_origin_problems(worktree)
+        if origin_problems:
+            results.append({"cmd": "<import-origin>", "exit": 1, "ok": False,
+                            "error": "; ".join(origin_problems)})
+            return False, results
 
         for oracle in oracles:
             exit_code, _stdout, _stderr = run_command(oracle, worktree, timeout=timeout)
@@ -77,8 +63,8 @@ def oracles_already_pass(kernel, task, *, timeout: int = 600) -> tuple[bool, lis
         repo.git("worktree", "remove", "--force", str(worktree))
         # The directory around the worktree is ours too.  Removing only the
         # worktree is what left an empty ``pmk-precheck-*`` husk behind on
-        # every lease admission.
-        _remove_scratch(temp_dir)
+        # every lease admission -- 412 of them before this line existed.
+        scratch.remove_scratch(temp_dir)
 
     return all(result.get("ok") for result in results), results
 
@@ -107,7 +93,8 @@ def _run_oracles(oracles, worktree: str | Path, timeout: int) -> list[dict]:
 
 
 def dry_run(kernel, task, *, base_ref: str = "", patch=None,
-            scratch_ref: str = "", timeout: int = 600) -> dict:
+            scratch_ref: str = "", timeout: int = 600,
+            temp_root: Path | str | None = None) -> dict:
     """Run *task*'s oracles at the base and on a scratch implementation.
 
     A canary card is valid only when its oracle **fails at the current base**
@@ -145,9 +132,9 @@ def dry_run(kernel, task, *, base_ref: str = "", patch=None,
     report["scratch_ref"] = scratch_ref
     report["patch"] = str(patch_path) if patch_path else ""
 
-    temp_root = Path(tempfile.mkdtemp(prefix="pmk-precheck-dry-"))
-    base_wt = temp_root / "base"
-    scratch_wt = temp_root / "scratch"
+    temp_dir = scratch.scratch_dir("pmk-precheck-dry-", temp_root)
+    base_wt = temp_dir / "base"
+    scratch_wt = temp_dir / "scratch"
     try:
         ok, detail = _add_worktree(repo, base_wt, base_ref)
         if not ok:
@@ -177,7 +164,7 @@ def dry_run(kernel, task, *, base_ref: str = "", patch=None,
         for worktree in (scratch_wt, base_wt):
             repo.git("worktree", "remove", "--force", str(worktree))
         repo.git("worktree", "prune")
-        _remove_scratch(temp_root)
+        scratch.remove_scratch(temp_dir)
 
     base_all = all(row["ok"] for row in report["base"]["oracles"])
     scratch_all = all(row["ok"] for row in report["scratch"]["oracles"])

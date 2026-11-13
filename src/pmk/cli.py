@@ -49,6 +49,21 @@ def _fail(exc: KernelError) -> int:
     return 2
 
 
+def _require_human(action: str) -> Actor:
+    """Return the human actor for an operator-only *action*, or fail closed.
+
+    Thin wrapper over :func:`pmk.authority.require_human_authority`, so every
+    command refuses the same way and through ``main``'s ``KernelError``
+    handler.  The refusal text does not say what to set.
+    """
+    from .authority import AuthorityError, require_human_authority
+    try:
+        return require_human_authority(action)
+    except AuthorityError as exc:
+        raise KernelError("not_authorized", action=action,
+                          msg=str(exc)) from exc
+
+
 def _load_scope(args) -> dict:
     scope = {"write": list(args.write or []), "read": list(args.read or [])}
     return scope
@@ -99,20 +114,17 @@ def cmd_task_void(args) -> int:
     oracle ``test -f pi-test.txt && grep -q pi pi-test.txt`` is a POSIX
     shell builtin unavailable on Windows.
     """
-    from pmk.api import _actor_from_env
     from pmk.events import Actor
     kernel = _kernel(args)
-    # PMK_ACTOR takes precedence; --actor only fills in when it is unset.
-    actor = _actor_from_env()
-    if actor is None:
+    # Human authority is required (reviewer item 2, incident seq 3630):
+    # PMK_ACTOR=human:<name> *and* an interactive TTY.  ``--actor`` is only a
+    # display label and cannot manufacture authority.
+    try:
+        actor = _require_human("task void")
+    except KernelError as exc:
+        return _fail(exc)
+    if getattr(args, "actor", None):
         actor = Actor.human(args.actor)
-    # The human-only check is advisory, not a security boundary — a worker
-    # that sets PMK_ACTOR=human: can bypass it.  But the default path
-    # (worker spawned with "worker:<profile>") is correctly refused.
-    if actor.kind != "human":
-        return _fail(KernelError(
-            "not_authorized",
-            msg=f"task_void requires a human actor; got kind={actor.kind!r}"))
     try:
         result = kernel.task_void(args.task_id, reason=args.reason, actor=actor)
         _out(result)
@@ -273,11 +285,16 @@ def cmd_pins_record(args) -> int:
     I8' breach, so re-recording is an explicit, recorded act, not a
     side-effect of editing a file.
     """
-    from pmk.events import Actor
     from pmk.policy import write_pins
     kernel = _kernel(args)
+    # Authority is checked *before* the pins are written, so a refused caller
+    # changes nothing (reviewer item 2).
+    try:
+        actor = _require_human("pins record")
+    except KernelError as exc:
+        return _fail(exc)
     path = write_pins(kernel.repo)
-    kernel.record_event("PINS_CHECKED", actor=Actor.human(),
+    kernel.record_event("PINS_CHECKED", actor=actor,
                         payload={"recorded": str(path),
                                  "note": "the pins were re-recorded"})
     _out({"ok": True, "pins": str(path)})
@@ -352,6 +369,12 @@ def cmd_stop(args) -> int:
 
 def cmd_resume(args) -> int:
     kernel = _kernel(args)
+    # Lifting a stop-the-line is an operator act (reviewer item 3): this used
+    # to delete the stop file with no authority check at all.
+    try:
+        _require_human("resume")
+    except KernelError as exc:
+        return _fail(exc)
     if kernel.repo.stop_file.exists():
         kernel.repo.stop_file.unlink()
     _out({"ok": True, "stopped": False})
@@ -443,15 +466,71 @@ def cmd_worktree_list(args) -> int:
 
 
 def cmd_worktree_prune(args) -> int:
-    """Reclaim clean lease worktrees (REC-04).  Dry run unless ``--yes``."""
+    """Reclaim worktrees.  Dry run unless ``--yes``.
+
+    Without ``--scratch``/``--merge-trees``/``--precheck-trees`` this
+    reclaims clean *lease* worktrees (REC-04).  With any of those flags it
+    reclaims the non-lease scratch trees instead -- still capture-first, and
+    still through the one deletion path
+    (:func:`worktrees.reclaim_after_capture`).
+    """
     kernel = _kernel(args)
     state = kernel.state()
     from . import worktrees as wts
-    result = wts.prune(kernel.repo, state,
-                       dry_run=not args.yes,
-                       older_than_days=args.void_older_than,
-                       keep_unmerged=not args.allow_active,
-                       archive=args.archive)
+    scratch = bool(getattr(args, "scratch", False))
+    merge = bool(getattr(args, "merge_trees", False))
+    precheck = bool(getattr(args, "precheck_trees", False))
+    if not scratch and not merge and not precheck:
+        result = wts.prune(kernel.repo, state,
+                           dry_run=not args.yes,
+                           older_than_days=args.void_older_than,
+                           keep_unmerged=not args.allow_active,
+                           archive=args.archive)
+        _out(result)
+        return 0
+    result = wts.prune_scratch(kernel.repo, state, dry_run=not args.yes,
+                               include_work=scratch, include_merge=merge,
+                               include_precheck=precheck)
+    if args.yes:
+        from .events import Actor
+        kernel.record_event(
+            "WORKTREE_SCRATCH_PRUNED", actor=Actor.kernel(),
+            payload={"include_work": scratch, "include_merge": merge,
+                     "include_precheck": precheck,
+                     "removed": [r["name"] for r in result["removed"]],
+                     "archives": [r["archive"] for r in result["removed"]
+                                  if r["archive"]],
+                     "skipped": [s["name"] for s in result["skipped"]],
+                     "counts": result["counts"]})
+    _out(result)
+    return 0
+
+
+def cmd_worktree_reclaim(args) -> int:
+    """Capture-first reclaim of one named worktree (R-12).
+
+    Dry run unless ``--yes``: without it the plan is printed and nothing is
+    written.  With it the reclaim goes through
+    :func:`worktrees.reclaim_after_capture` and the run is recorded as a
+    ``WORKTREE_SCRATCH_PRUNED`` event, so a one-off reclaim is no longer
+    invisible to the log.
+    """
+    kernel = _kernel(args)
+    state = kernel.state()
+    from . import worktrees as wts
+    result = wts.reclaim_path(kernel.repo, state, Path(args.path),
+                              dry_run=not args.yes)
+    if args.yes and result.get("reclaimed"):
+        from .events import Actor
+        kernel.record_event(
+            "WORKTREE_SCRATCH_PRUNED", actor=Actor.kernel(),
+            payload={"include_work": False, "include_merge": False,
+                     "include_precheck": False, "kind": "path",
+                     "path": result["path"],
+                     "removed": [result["name"]],
+                     "archives": [result.get("archive", "")],
+                     "skipped": [],
+                     "counts": {"candidates": 1, "removed": 1, "skipped": 0}})
     _out(result)
     return 0
 
@@ -569,12 +648,15 @@ def cmd_fleet_check(args) -> int:
 
 
 def cmd_fleet_enable(args) -> int:
-    from pmk.events import Actor
     kernel = _kernel(args)
+    try:
+        actor = _require_human("profile enable")
+    except KernelError as exc:
+        return _fail(exc)
     state = _fleet_state(kernel)
     state.enable(args.profile_id, note="enabled by the operator")
     state.save()
-    kernel.record_event("PROFILE_ENABLED", actor=Actor.human(),
+    kernel.record_event("PROFILE_ENABLED", actor=actor,
                         subject=args.profile_id,
                         payload={"profile": args.profile_id})
     _out({"profile": args.profile_id, "enabled": True})
@@ -582,12 +664,15 @@ def cmd_fleet_enable(args) -> int:
 
 
 def cmd_fleet_disable(args) -> int:
-    from pmk.events import Actor
     kernel = _kernel(args)
+    try:
+        actor = _require_human("profile disable")
+    except KernelError as exc:
+        return _fail(exc)
     state = _fleet_state(kernel)
     state.disable(args.profile_id, note=args.reason or "disabled by the operator")
     state.save()
-    kernel.record_event("PROFILE_DISABLED", actor=Actor.human(),
+    kernel.record_event("PROFILE_DISABLED", actor=actor,
                         subject=args.profile_id,
                         payload={"profile": args.profile_id,
                                  "reason": args.reason or ""})
@@ -596,13 +681,16 @@ def cmd_fleet_disable(args) -> int:
 
 
 def cmd_fleet_cool(args) -> int:
-    from pmk.events import Actor
     kernel = _kernel(args)
+    try:
+        actor = _require_human("profile cooling")
+    except KernelError as exc:
+        return _fail(exc)
     state = _fleet_state(kernel)
     state.cool(args.profile_id, args.minutes * 60,
                note=f"cooled for {args.minutes} minutes")
     state.save()
-    kernel.record_event("PROFILE_COOLING", actor=Actor.human(),
+    kernel.record_event("PROFILE_COOLING", actor=actor,
                         subject=args.profile_id,
                         payload={"profile": args.profile_id,
                                  "seconds": args.minutes * 60})
@@ -757,12 +845,15 @@ def cmd_agent_stop(args) -> int:
 
 
 def cmd_agent_swap(args) -> int:
-    from pmk.events import Actor
     kernel = _kernel(args)
+    try:
+        actor = _require_human("agent swap")
+    except KernelError as exc:
+        return _fail(exc)
     state = kernel.state()
     if args.task not in state.leases:
         raise KernelError("no_lease", task=args.task)
-    kernel.record_event("AGENT_RESUMED", actor=Actor.human(), subject=args.task,
+    kernel.record_event("AGENT_RESUMED", actor=actor, subject=args.task,
                         fence=state.leases[args.task].fence,
                         payload={"profile": args.profile, "mode": "swap",
                                  "requested_by": "operator"})
@@ -1083,8 +1174,9 @@ def build_parser() -> argparse.ArgumentParser:
     void = task.add_parser("void", help="permanently retire a task (operator-only)")
     void.add_argument("task_id")
     void.add_argument("--reason", required=True)
-    void.add_argument("--actor", default="operator",
-                      help="who is voiding (default: operator)")
+    void.add_argument("--actor", default=None,
+                      help=("optional human name label; human authority "
+                            "(PMK_ACTOR plus a terminal) is still required"))
     void.set_defaults(func=cmd_task_void)
 
     claim = sub.add_parser("claim", help="claim a task for a lease")
@@ -1167,7 +1259,28 @@ def build_parser() -> argparse.ArgumentParser:
     wt_prune.add_argument("--archive", action="store_true",
                           help="capture each dirty tree (REC-02) and verify "
                                "the capture before pruning it")
+    wt_prune.add_argument("--scratch", action="store_true",
+                          help="reclaim non-lease worktrees under work/ "
+                               "(canary/gate), capture-first")
+    wt_prune.add_argument("--merge-trees", dest="merge_trees",
+                          action="store_true",
+                          help="reclaim %%TEMP%%/pmk-merge-* scratch trees, "
+                               "capture-first")
+    wt_prune.add_argument("--precheck-trees", dest="precheck_trees",
+                          action="store_true",
+                          help="reclaim %%TEMP%%/pmk-precheck-dry-* scratch "
+                               "trees (their base/ and scratch/ worktrees), "
+                               "capture-first")
     wt_prune.set_defaults(func=cmd_worktree_prune)
+    wt_reclaim = worktree.add_parser(
+        "reclaim",
+        help="capture-first reclaim of one named worktree (dry-run by "
+             "default); an applied run records a WORKTREE_SCRATCH_PRUNED "
+             "event")
+    wt_reclaim.add_argument("path", help="the worktree directory to reclaim")
+    wt_reclaim.add_argument("--yes", action="store_true",
+                            help="actually reclaim (without it, a dry run)")
+    wt_reclaim.set_defaults(func=cmd_worktree_reclaim)
     wt_archive = worktree.add_parser(
         "archive", help="capture a worktree's uncommitted work (REC-02)")
     archive_group = wt_archive.add_mutually_exclusive_group(required=True)
@@ -1282,10 +1395,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     dispatch = sub.add_parser("dispatch", help="the dispatch loop") \
         .add_subparsers(dest="dispatch_command", required=True)
-    dispatch_run = dispatch.add_parser(
-        "run",
-        help="run the dispatch loop (WARNING: never reaches DONE - use "
-             "`pmk project run` for anything you intend to measure; REC-06)")
+    dispatch_run = dispatch.add_parser("run", help="run the dispatch loop")
     dispatch_run.add_argument("--seconds", type=float, default=30)
     dispatch_run.add_argument("--resume", action="store_true",
                              help="clear a persisted dispatch pause before running")

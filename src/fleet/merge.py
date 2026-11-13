@@ -48,14 +48,14 @@ validation_problems) so Kernel.integrate and merge.py cannot disagree.
 from __future__ import annotations
 
 import os
-import shutil
-import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from pmk.api import Kernel, KernelError
 
-from .runenv import worktree_env
+from . import scratch
+from .runenv import import_origin_problems, worktree_env
 
 #: The identity every pipeline-landed commit must carry.  Four commits in the
 #: incident window (e08fa8d, ebe46ce, 82f6be1, 9893d94) were authored as the
@@ -65,6 +65,34 @@ PIPELINE_NAME = "umaws-pilot"
 PIPELINE_EMAIL = "umaws-pilot@localhost"
 PIPELINE_IDENTITY = ("-c", f"user.name={PIPELINE_NAME}",
                      "-c", f"user.email={PIPELINE_EMAIL}")
+
+#: The merge gate is budgeted for the 12.5-minute pass observed on T-0150,
+#: not the 4-minute failure on T-0148. Twenty minutes leaves headroom without
+#: letting a genuinely hung gate hold the serial merge queue indefinitely.
+DEFAULT_GATE_TIMEOUT_S = 1200
+
+
+def gate_timeout(kernel) -> int:
+    """The configured per-gate timeout, bounded to a practical default."""
+    from pmk.policy import load_agents
+    default = DEFAULT_GATE_TIMEOUT_S
+    repo = getattr(kernel, "repo", kernel)
+    try:
+        config = load_agents(repo)
+    except Exception:
+        return default
+    fleet = config.get("fleet") if isinstance(config, dict) else None
+    value = (fleet or {}).get("gate_timeout_s", default)
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _gate_evidence(base_head: str, merged_head: str, duration_s: float) -> dict:
+    """The timing and tree identities shared by every gate event."""
+    return {"base_head": base_head, "merged_head": merged_head,
+            "duration_s": round(max(0.0, float(duration_s)), 3)}
 
 
 def identity_anomaly(repo, worktree) -> str:
@@ -221,7 +249,8 @@ def acting_profile_for(kernel, task_id: str, lease=None) -> str:
 def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
               gate_cmd: str = "", keep_worktree: bool = True,
               agent: str | None = None,
-              model: str | None = None) -> MergeResult:
+              model: str | None = None,
+              temp_root: Path | str | None = None) -> MergeResult:
     """Run one lease through the merge queue.
 
     B-R2b: The merge and gate run in a TEMP WORKTREE (not the main tree).
@@ -237,6 +266,11 @@ def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
     6. result.commit = main's HEAD after the fast-forward. Always remove
        <temp> and its temp branch.
     Keep the "changed nothing" reintegration behaviour.
+
+    *temp_root* places the merge scratch under a caller-owned directory --
+    a pytest-managed ``tmp_path`` in tests -- instead of the global temp
+    directory; see :mod:`fleet.scratch` for why the default littered it.
+    The scratch is removed on every exit path, read-only files included.
     """
     from .harness import scope_check
 
@@ -317,7 +351,7 @@ def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
     base_head = base_head.strip()
 
     # B-R2b: Create temp worktree from clean main HEAD
-    merge_dir = Path(tempfile.mkdtemp(prefix="pmk-merge-"))
+    merge_dir = scratch.scratch_dir("pmk-merge-", temp_root)
     temp_wt = merge_dir / "merge"
     max_retries = 2
     retry_count = 0
@@ -373,27 +407,56 @@ def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
                     merge_commit = merge_commit.strip()
 
                 # Step 3: Run the gate in the temp worktree
+                gate_duration = 0.0
                 if gate_cmd:
                     import subprocess
+                    origin_problems = import_origin_problems(temp_wt)
+                    if origin_problems:
+                        result.message = ("import-origin preflight failed: "
+                                          + "; ".join(origin_problems))
+                        result.failure_class = "INFRASTRUCTURE_FAILED"
+                        kernel.record_event("INFRASTRUCTURE_FAILED", subject=task.id,
+                                            fence=lease.fence,
+                                            payload={"stage": "import-origin",
+                                                     "message": result.message,
+                                                     "base_head": base_head,
+                                                     "merged_head": merge_commit})
+                        repo.git("merge", "--abort", cwd=temp_wt)
+                        return result
+
+                    gate_started = time.monotonic()
                     try:
                         gate_env = worktree_env(temp_wt)
                         proc = subprocess.run(
                             gate_cmd, shell=True,
                             cwd=str(Path(temp_wt).resolve()),
-                            capture_output=True, timeout=900,
-                                              text=True, encoding="utf-8",
-                                              errors="replace",
-                                              env=gate_env)
+                            capture_output=True,
+                            timeout=gate_timeout(kernel),
+                            text=True, encoding="utf-8", errors="replace",
+                            env=gate_env)
                         result.gate_cmd = gate_cmd
                         result.gate_exit = proc.returncode
                     except (subprocess.SubprocessError, OSError) as exc:
+                        gate_duration = time.monotonic() - gate_started
                         result.gate_cmd = gate_cmd
                         result.gate_exit = 127
                         result.message = f"the gate command failed to run: {exc}"
+                        kernel.record_event(
+                            "ORACLE_RESULT", subject=task.id,
+                            fence=lease.fence,
+                            payload={"stage": "gate", "ok": False,
+                                     "cmd": gate_cmd,
+                                     "exit": result.gate_exit,
+                                     "message": result.message,
+                                     "reintegration": changed_nothing,
+                                     **_gate_evidence(base_head, merge_commit,
+                                                      gate_duration)})
                         _persist_gate_output(
                             bundle, kernel,
                             _gate_output(gate_cmd, 127, "", str(exc)))
+                        repo.git("merge", "--abort", cwd=temp_wt)
                         return result
+                    gate_duration = time.monotonic() - gate_started
                     diagnostics = _gate_diagnostics(proc.stdout, proc.stderr)
                     _persist_gate_output(
                         bundle, kernel,
@@ -403,13 +466,16 @@ def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
                         result.message = (f"the gate command {gate_cmd!r} exited "
                                           f"{result.gate_exit}")
                         result.failure_class = "GATE_FAILED"
-                        kernel.record_event("ORACLE_RESULT", subject=task.id,
-                                            fence=lease.fence,
-                                            payload={"stage": "gate", "ok": False,
-                                                     "cmd": gate_cmd,
-                                                     "exit": result.gate_exit,
-                                                     "reintegration": changed_nothing,
-                                                     **diagnostics})
+                        kernel.record_event(
+                            "ORACLE_RESULT", subject=task.id,
+                            fence=lease.fence,
+                            payload={"stage": "gate", "ok": False,
+                                     "cmd": gate_cmd,
+                                     "exit": result.gate_exit,
+                                     "reintegration": changed_nothing,
+                                     **_gate_evidence(base_head, merge_commit,
+                                                      gate_duration),
+                                     **diagnostics})
                         # Abort the merge in temp worktree
                         repo.git("merge", "--abort", cwd=temp_wt)
                         return result
@@ -426,9 +492,9 @@ def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
                         repo.git("worktree", "remove", "--force", str(temp_wt))
                     except Exception:
                         pass
-                    shutil.rmtree(merge_dir, ignore_errors=True)
+                    scratch.remove_scratch(merge_dir)
                     # Recreate merge_dir for next iteration
-                    merge_dir = Path(tempfile.mkdtemp(prefix="pmk-merge-"))
+                    merge_dir = scratch.scratch_dir("pmk-merge-", temp_root)
                     temp_wt = merge_dir / "merge"
                     base_head = current_main_head
                     retry_count += 1
@@ -470,11 +536,14 @@ def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
                                       else "the worker changed nothing")
                 else:
                     result.message = "merged"
-                kernel.record_event("ORACLE_RESULT", subject=task.id, fence=lease.fence,
-                                    payload={"stage": "gate", "ok": True,
-                                             "cmd": gate_cmd,
-                                             "reintegration": already_merged,
-                                             "no_ff_fallback": False})
+                kernel.record_event(
+                    "ORACLE_RESULT", subject=task.id, fence=lease.fence,
+                    payload={"stage": "gate", "ok": True,
+                             "cmd": gate_cmd,
+                             "reintegration": already_merged,
+                             "no_ff_fallback": False,
+                             **_gate_evidence(base_head, merge_commit,
+                                              gate_duration)})
                 return result
 
             finally:
@@ -485,7 +554,7 @@ def integrate(kernel: Kernel, task, lease, worktree: str | Path, *,
                     pass
 
     finally:
-        shutil.rmtree(merge_dir, ignore_errors=True)
+        scratch.remove_scratch(merge_dir)
 
     # Should not reach here
     result.message = "merge queue exhausted retries"
