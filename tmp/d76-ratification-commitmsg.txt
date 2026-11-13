@@ -1,0 +1,9 @@
+decision: ratify D-76 (toy-only) - Arm A scope-gating removal and worker commits
+
+Operator instruction 2026-11-13, verbatim: "D-76 - APPROVED AND RATIFIED. follow correct project procedures to update register to show this decision."
+
+D-76 is ratified as drafted: Arm A removes write-scope gating (D-L6 refusal at claim, non-empty scope.write, OVERSEER_PROMPT scope sentences, blocking bundle scope check), permits worker commits with identity and provenance trailer, and raises concurrency, in the toy repository only, behind the switch rather than by deletion. Ratification does not retire D-L6, does not authorise Arm C (D-75), does not extend to Arm B (D-77, still a draft), and does not transfer to C:\temp\projects\testproject1. D-78's amendment (max_total_agents 10 -> 20) is separately ratified and stands.
+
+Register changes: D-76 attribution column now records the operator's ratification; the D-75..D-77 section preamble records the per-record ratification status; a dated ratification block is appended after D-77.
+
+Agent: opencode (Baidu ERNIE 5.5 Flash Preview) | Model: baidu/ernie-5.5-flash-preview:free (kilo)

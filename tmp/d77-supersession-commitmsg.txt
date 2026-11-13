@@ -1,0 +1,5 @@
+decision: note that D-77's ratification supersedes the D-76 block's "still a draft" clause
+
+The D-76 ratification block, written earlier on 2026-11-13, says ratification "does not extend to Arm B (D-77, still a draft)". D-77 was ratified the same day, so that clause is now stale. Per the register's preserve-and-supersede rule the clause is not rewritten; the D-77 block now states that it supersedes that clause and why the clause was accurate when written.
+
+Agent: opencode (Baidu ERNIE 5.5 Flash Preview) | Model: baidu/ernie-5.5-flash-preview:free (kilo)

@@ -1,0 +1,35 @@
+﻿docs: void the Arm A run - shared ledger, no terminal evidence
+
+Arm A is not a measurement and no figure from it should be compared against the
+baseline.
+
+The process was launched 11:07:40Z and was alive at every check through
+11:17:36Z. It was absent from the process table at 11:27:37Z. Nothing in the log
+records an ending: no run_budget line, no project status summary, no
+ORACLE_RESULT, no merge events, no per-task outcome. The wrapper reported a
+timeout rather than a return code, so I cannot claim it exited normally and I
+merely lost its output. 9 AGENT_STARTED produced only 5 AGENT_EXITED; the other
+4 started work that ended with no terminal event.
+
+That alone would void it, but the decisive reason is contamination, and it is
+the same failure that already forced withdrawal of the 2.995 DONE/h baseline
+figure. Two further pmk project run conductors started at 11:12:33Z and
+11:13:32Z against this same repository while Arm A was being measured. PYTHONPATH
+plus --root isolates which repository a command addresses and does nothing about
+concurrency, so their CLAIMED, AGENT_EXITED and FLEET_BLOCKED are
+indistinguishable from Arm A in the ledger. Width in particular - the one metric
+this arm exists to measure - would be a mixture of three runs.
+
+Corrects myself in passing: a draft of this record gave the last agent exit as
+11:28:17Z and the absent check as 11:28:34Z. Neither was observed and both are
+later than any check I made; the real values are 11:24:40Z and 11:27:37Z. Left
+visible in the record rather than silently amended, because fabricating
+timestamps in an evidence file is the same error class this document exists to
+describe.
+
+No cap-20 arm has been measured. The question D-78 raised is still open. Three
+ways forward are listed in section 6 and left to the operator: a private repo
+copy per arm, a mutual-exclusion lock that other task-agents also respect, or
+accepting the comparison is unobtainable here and stopping.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: A

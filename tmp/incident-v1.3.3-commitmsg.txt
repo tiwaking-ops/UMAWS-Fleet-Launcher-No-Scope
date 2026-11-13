@@ -1,0 +1,5 @@
+docs: incident report v1.3.3 - record D-76 and D-77 as ratified
+
+The §12 reference list marks the ratified toy records in bold, so it was stale once the operator ratified D-76 and D-77 (2026-11-13). D-76 and D-77 are now bolded, D-75 is marked as the remaining draft, and the version/amendment front matter records the change (v1.3.3, recorded by opencode, baidu/ernie-5.5-flash-preview:free). The D-79 line citation is updated to pilot/decisions.md:815-819, which shifted when the two ratification blocks were added. No analysis changes.
+
+Agent: opencode (Baidu ERNIE 5.5 Flash Preview) | Model: baidu/ernie-5.5-flash-preview:free (kilo)

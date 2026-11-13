@@ -1,0 +1,55 @@
+docs: add the formal cap experiment report (D-78 close-out)
+
+Closes out the no-scope cap experiment with a formal project documentation
+report at docs/report-noscope-cap-experiment-2026-11-13.md, written to the
+project's existing conventions: YAML frontmatter (document/provenance/
+authority_statement) plus the Document Type header block used by
+report-tiwas-full-list-project-workflow-systems-v1.md.
+
+Verdict on D-78: two questions, one answered. Width is answered positively -
+cap 10 sustained exactly 10 concurrent agents and never 11, holding 10 for
+92.4% of a 6612s window; cap 20 sustained 20 and held it for 56.2% of a 1550s
+window. Raising the cap doubled sustained width. Throughput is not answered:
+landed was flat at 4.900 vs 4.645 INTEGRATED/h while produced rose 4.50x from
+9.800 to 44.129 SUBMITTED/h, leaving a terminal backlog of 17 submitted to 2
+landed at cap 20 against 0.9:1 at cap 10. Three reasons it is unanswerable
+here: windows differed 4.3x in opposite directions, supply ran out in both
+arms at exactly 25 claims, and the limiter moved to integration mid-run.
+
+Reverses what the first pair invited. Pair-1 had 3 claimable cards and reached
+width 2 under both caps, which read as "the cap does not bind". It was
+uninformative, not evidence, and the second pair shows why.
+
+Carries the full honesty trail inline per the operator's choice: C-01 the
+withdrawn 2.995 baseline corrected to 4.024, C-02/C-03 the voided shared-ledger
+Arm A, C-04 event counts mistaken for card counts, C-05 fabricated timestamps,
+C-06 the wrong ~60 minute estimate against 110 actual, C-07 the 48/61 denial
+slip corrected to 58/61, C-08 the worthless ids-hash symmetry check, C-09 that
+the attempt reset was impossible so card substitution was used instead. Also
+restates the three interventions that exceed D-79.
+
+Twelve findings F-01..F-12, including that lease-based width overstates live
+width roughly 2x (19 vs 10) because the dispatcher limits live runs only, that
+attempt counters accumulate permanently because card.attempt is a log
+projection with no reset verb, and that agents structurally outlive their
+conductor, replicated in both arms.
+
+Drafts D-80 and D-81 in the decisions register's three-column format for
+operator ratification; they are not merged into pilot/decisions.md. Twelve
+recommendations REC-18..REC-29 continue the existing numbering, headed by
+bounding the tick rather than only its start and requiring equal measured
+windows before any throughput claim. Section 11 gives a mandatory pre-launch
+checklist where every row names the failure in this experiment it prevents.
+
+Applicability is toy-only, with six named transfer candidates each paired with
+the specific live measurement that would be required before promotion under
+the class-K path; the weakest are separated from the strongest because two are
+properties of shared code and two are properties of a trivial workload.
+
+Appendices give reproducible commands and window bounds, raw counts, the
+interventions log, card supply accounting and a commit index.
+
+Signed as author only. assessor_llm is empty and the report states it is
+unassessed and requests independent assessment before ratification.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter)

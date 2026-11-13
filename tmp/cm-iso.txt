@@ -1,0 +1,33 @@
+docs: adopt private repository copies for arm isolation
+
+Follows the operator's decision after Arm A was voided. Each arm now runs in
+its own full copy of the repository, so its ledger can only be written by its
+own conductor.
+
+Records why the previous approach failed, since it cost two measurements and
+the mechanism is the transferable result: --root and PYTHONPATH isolate which
+repository a command addresses and do nothing about concurrency. Task-agents
+working their own cards independently issue pmk project run against the toy
+repository, and three conductors were observed writing one .pm ledger inside a
+single arm window. CLAIMED, AGENT_EXITED and FLEET_BLOCKED from all three are
+indistinguishable there, so width - what the arm exists to measure - cannot be
+attributed.
+
+Two traps worth writing down because both would silently produce an empty arm:
+
+- work/ must exist in the copy even when empty. drain_merge_queue opens its
+  per-task loop with a check that skips every integration if the directory is
+  missing, so a copy made without it completes no cards at all.
+- The pmk.exe shim re-executes itself, so a second python process with PPID
+  equal to the first is not a foreign conductor. Isolation must be checked by
+  PPID and root, never by counting processes.
+
+Both copies were normalised to an identical start - DONE 22, READY 22, 0 active
+leases, SUBMITTED 0, with the same seven tasks moved to READY - verified in each
+copy separately. SUBMITTED 0 matters particularly: an inherited submit backlog
+is what collapsed the first baseline run into a single 3399.9s tick.
+
+Arms run sequentially, control first. Concurrent execution is now safe for the
+ledgers but would add cross-contention to the throughput comparison itself.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: cap10-control

@@ -804,6 +804,23 @@ D-77 | 2026-11-11 | Tencent HY4 Preview (executor; drafted 2026-11-11) + operato
 
 ---
 
+## D-79 closure — the deferral condition is met (2026-11-13)
+
+**Recorded by Baidu ERNIE 5.5 Flash Preview (assessor) on the operator's instruction, 2026-11-13.**
+
+D-79(a) deferred automatic requeue (REC-01) **until all arms are finished**, and held it there without abandoning it. The cap experiment is complete: both pairs are measured, D-78 is answered on width and explicitly unanswered on throughput, and `docs/report-noscope-cap-experiment-2026-11-13.md` closes the work out. The deferral condition is therefore satisfied.
+
+**The deferral ends here. REC-01 is neither implemented nor abandoned — it is now an open, unblocked decision.** Two courses remain and the operator has not chosen between them:
+
+- **Implement automatic requeue** — wire `Kernel.task_ready()` into the Conductor so `REWORK` cards return to `READY` on their own. This is the product fix D-79(a) protected the experiment from.
+- **Retire REC-01** — if the live system's width problem is scope locking rather than recovery, automatic requeue may not be worth the concurrency it would add, and the effort belongs on the scoped-conflict condition the cap experiment did not test.
+
+The assessment at `docs/assessment-noscope-cap-experiment-2026-11-13.md` recommends the second course be considered first, on the ground that the live system holds at 2 because of scope locking (D-L6), not because of requeue latency. That is a recommendation, not a decision.
+
+**What this closure does not do.** It does not implement REC-01, does not retire it, does not change any source file, and does not touch `.pm/policy.toml`, the constitution or the pins. OR-15 is not engaged.
+
+---
+
 ## Toy-repository record D-78 — UMAWS no-scope experiment (2026-11-12)
 
 This record exists **only in the toy repository `C:\temp\projects\umaws-noscope-toy`**. It is **not** part of the live project's decision register and must not be merged into `C:\temp\projects\testproject1\pilot\decisions.md`.

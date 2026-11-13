@@ -1,0 +1,32 @@
+docs: record the cap-20 arm and compare it against the cap-10 control
+
+Private root C:\temp\projects\toy-arm-cap20, launched 12:08:29Z, same protocol
+as the control (--seconds 1800). Isolation verified at launch: one conductor
+(PID 6504) plus its pmk.exe shim child, both bound to that copy, nothing else
+bound to either copy. Window reconstructed from this arm's own ledger, not from
+a guessed duration: start marker 12:08:29Z to last event 12:37:54Z = 1765s,
+which matches the run's own report exactly.
+
+Result: 3 CLAIMED, 3 AGENT_STARTED, 3 AGENT_EXITED, 2 INTEGRATED, 2 tasks DONE
+(T-0019, T-0043), LIVE peak and sustained both 2, 4.079 DONE/h, denial 95.5%
+(63/66), zero INCIDENT, zero QUARANTINED, sentinel [] exit 0.
+
+The two arms are the same run. Identical claims, identical width of 2, and even
+the same two cards completed. No FLEET_BLOCKED in either window names a fleet
+cap, and neither arm held more than 2 agents alive, so the cap was not reached
+at 10 or at 20. The throughput gap (5.053 vs 4.079) is an artifact of dividing
+two completed tasks by two different measured windows and is noise on samples
+this small.
+
+So D-78 is not answered by this pair, and the tempting reading - raising the cap
+made no difference, therefore the cap does not bind - is not supported. What is
+supported is narrower: under this card pool neither cap value was approached.
+The cause is the poisoned pool documented in 1.1, not the cap itself.
+
+Testing D-78 needs attempt counters reset in both copies and both arms re-run
+symmetrically. That exceeds the single requeue D-79 permits per arm, so it is
+recorded as a decision for the operator rather than performed here. Even then a
+confound remains: 22 of 44 cards are already DONE, so a wider fleet may starve
+for tractable cards instead of reaching 20.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: cap20

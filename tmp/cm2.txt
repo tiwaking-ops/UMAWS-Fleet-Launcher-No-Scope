@@ -1,0 +1,21 @@
+﻿docs: record that Arm A was void and no cap-20 arm has been measured
+
+Adds 9.4. The incident report analysed a cap-10 failure and must therefore also
+say what happened at cap 20, which is: nothing usable.
+
+Arm A ran 11:07:40Z at the reinstated cap 20 and yielded no measurement. No
+terminal evidence - timeout with no exit code, no run_budget line, only 5 of 9
+AGENT_STARTED with a matching AGENT_EXITED. And decisively, two further pmk
+project run conductors started at 11:12:33Z and 11:13:32Z against the same
+repository mid-measurement.
+
+Stated explicitly because it is the load-bearing point: this is the same root
+cause as the 9.3 contamination that forced withdrawal of the 2.995 DONE/h
+figure, not a second unrelated mishap. --root and PYTHONPATH isolate which
+repository a command addresses and do nothing about concurrency, so every arm
+run here shares a ledger, and width specifically cannot be attributed.
+
+Outcome: no cap-20 arm has been measured and the question D-78 raised remains
+open. Options for making the comparison obtainable are in docs/arma-result-record-2026-11-12.md and left to the operator.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: A

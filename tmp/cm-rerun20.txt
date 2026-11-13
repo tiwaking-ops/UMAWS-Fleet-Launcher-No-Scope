@@ -1,0 +1,40 @@
+docs: record the cap-20 re-run and answer D-78 on width
+
+Root toy-arm-cap20, launched 22:19:05Z from the identical normalised start state
+(DONE 24, READY 44, claimable 28) after confirming no process was bound to
+either arm root. Window from its own ledger: 22:19:16Z to 22:45:06Z = 1550s,
+agreeing with the run's own 1551s. It stopped early at 0.86 of budget after 3
+ticks, REC-15 declining to start a tick that would outlive the budget.
+
+Result: 25 CLAIMED, 33 AGENT_STARTED, 27 exited so 6 never exited, 2 INTEGRATED
+(T-0020, T-0046), 19 distinct SUBMITTED, 4.645 DONE/h, no INCIDENT, no
+QUARANTINED, sentinel [] exit 0.
+
+Width, computed stepwise from AGENT_STARTED/EXITED pairs over each arm's own
+measured window: cap 10 reached max 10 and never 11, holding 10 for 92.4% of
+6612s. Cap 20 reached max 20 and never more, holding 20 for 56.2% of 1550s and
+15 or more for 76.1%. Neither arm exceeded its own ceiling. Raising the cap 10
+to 20 doubled sustained width, which reverses the inference the first pair
+invited - that pair could not reach 10 under any ceiling because it had 3
+claimable cards.
+
+Throughput is a different answer. Landed work is flat: 4.900 INTEGRATED/h at cap
+10 against 4.645 at cap 20. But produced work is 4.5x faster: 9.800 distinct
+SUBMITTED/h at cap 10 against 44.129 at cap 20, with agents exiting at 10.9/h
+against 51.1/h. At window close the cap-20 copy held 17 SUBMITTED and only 2
+landed against the control's 8 submitted, so the binding constraint at cap 20
+has moved from dispatch width to the serial integration gate.
+
+Three reasons not to read 4.645 against 4.900 as wider being worse: the windows
+differ by 4.3x so landed totals are not exchangeable; both arms claimed exactly
+25 cards so supply ran out rather than the cap, which is also why cap 20 held
+its ceiling only 56.2% of the window against 92.4%; and neither run met its
+requested budget, the control overrunning 3.67x and the arm stopping at 0.86.
+
+So D-78 is answered for width and not for throughput. If the question is whether
+the fleet can go wider, yes and the cap should follow the target. If it is
+whether wider finishes more work, that is now a question about integration
+throughput and needs equal measured windows or the merge gate fixed first. That
+is a recommendation, not a finding.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: cap20

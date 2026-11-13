@@ -1,0 +1,35 @@
+docs: record the second intervention that restored dispatchable supply
+
+Authorised as "reset the attempt counters in both copies and re-run both arms
+symmetrically". Recording up front that a reset is not possible, so supply was
+restored by substitution instead.
+
+card.attempt is not a stored field. It is a projection over the event log,
+incremented on every CLAIMED event (state.py:137) and decremented nowhere.
+TASK_READY clears block_reason but not attempt, and no pmk verb exposes a reset.
+The remaining routes were rewriting .pm history by hand, which is forbidden
+because the Kernel is the only writer, or giving the fleet new cards, which
+start at attempt 0. New cards were chosen.
+
+So the intent is met but not the letter: this is substitution, not reset. 24
+cards (T-0045..T-0068) were created in each copy in the same order with a write
+scope that does not yet exist, the standard checker oracle, RESULT.md evidence,
+attempts.max 3, and no dependencies. The 27 cards carrying inherited exhaustion
+stay BLOCKED in both copies and produce identical refusal noise in both; they
+are left rather than voided to keep the intervention minimal.
+
+Symmetry verified element-wise. An earlier check printed a differing ids hash
+between the copies, which proves nothing because Python salts string hashes per
+process; the comparison is redone directly and shows identical id sets, states
+and attempt counts, 27 claimable each. After normalisation both report DONE 24,
+READY 44, claimable 28.
+
+28 claimable against cap 20 is 1.4x supply and against cap 10 is 2.8x, so for
+the first time the observed ceiling can be the cap rather than the queue.
+
+Confound declared before seeing results: 24 of the 28 claimable cards are new
+toy cards whose oracle is a file containing TOY-OK, so absolute throughput will
+greatly exceed the first pair's 4-5 DONE/h and is not comparable to it. What
+survives is cap 10 against cap 20 within this pair on identical cards.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: both

@@ -1,0 +1,28 @@
+docs: withdraw the 2.995 DONE/h figure; correct the baseline window to 4.024
+
+My 9.3 analysis window ran 15 minutes past the process and silently absorbed
+activity from a second `pmk project run` started by another task's agent in the
+same toy repository: 8 CLAIMED and 11 FLEET_BLOCKED, which is exactly the 21/35
+pair 9.3 originally reported. I reproduced the corrected window independently
+and it matches 14.4 exactly: 13 CLAIMED, 24 FLEET_BLOCKED, 3 DONE, 4.024 DONE/h,
+64.9% denial, 2684 s, OVERRAN x1.49. The 2.995 DONE/h figure is withdrawn.
+
+Cause worth recording, because it is a method error rather than a data error: I
+derived --end as start plus a guessed duration, so the analyzer's "measured
+window" was echoing my own input rather than being read from the ledger. A
+window must come from the log.
+
+Also weakened to what the evidence actually supports. Both arms reach live width
+10, but per 14.1 neither sustains it: baseline-2 held level 3 for 66% of its
+window and 10 for 25%, and no FLEET_BLOCKED event names a fleet cap, so "the cap
+binds" is not established. And the 64.9% headline is not the D-L6 scope-denial
+rate, which is 4/37 = 10.8%.
+
+Adds the isolation finding, which outranks both numbers in importance:
+PYTHONPATH plus --root is not isolation from concurrency. Anything that can
+write .pm shares the log. Arm A's window therefore has to be reconstructed from
+the ledger and checked for foreign activity. At launch the only pmk processes
+were the shim and its re-exec'd child, verified by PPID, but that is a
+point-in-time check rather than a guarantee for the whole window.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: A

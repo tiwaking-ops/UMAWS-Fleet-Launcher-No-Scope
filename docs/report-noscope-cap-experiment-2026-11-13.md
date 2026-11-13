@@ -5,10 +5,10 @@ document:
   version: "1.0.0"
 provenance:
   author_llm: {name: "Tencent HY4 Preview", version: "tencent/hy4-preview-free (orcarouter)"}
-  assessor_llm: []
+  assessor_llm: [{name: "Baidu ERNIE 5.5 Flash Preview", version: "baidu/ernie-5.5-flash-preview:free (kilo)", reference: "docs/assessment-noscope-cap-experiment-2026-11-13.md"}]
   created_date: "2026-11-13"
   scope: "Toy repository C:\\temp\\projects\\umaws-noscope-toy and its two private arm copies only. Nothing here applies to the live repository C:\\temp\\projects\\testproject1."
-authority_statement: "Evidence record plus advisory recommendations. Authorises no change in either repository. Not independently assessed."
+authority_statement: "Evidence record plus advisory recommendations. Authorises no change in either repository. Independently assessed — see docs/assessment-noscope-cap-experiment-2026-11-13.md; the assessment accepts the evidence, rejects the framing on scope gating, and splits D-80 (ratify) from D-81 (hold)."
 ---
 
 # Report: does raising the concurrency cap from 10 to 20 increase sustained width and throughput?
@@ -17,16 +17,16 @@ authority_statement: "Evidence record plus advisory recommendations. Authorises 
 **Purpose**: Close out the no-scope cap experiment raised under decision **D-78**, record every measurement with the window it came from, and supply the recommendations, safeguards and protocol improvements on which **future experiments in this system** should be based
 **Audience**: The operator, and any agent designing or running the next experiment in this system
 **Author (author_llm)**: Tencent HY4 Preview — `tencent/hy4-preview-free (orcarouter)`
-**Assessor (assessor_llm)**: *none — this report is unassessed.* Independent assessment is requested before ratification. The author has not assessed its own work, and no other model has reviewed it.
+**Assessor (assessor_llm)**: Baidu ERNIE 5.5 Flash Preview — `baidu/ernie-5.5-flash-preview:free (kilo)`. Assessment at **`docs/assessment-noscope-cap-experiment-2026-11-13.md`**. The author has not assessed its own work.
 **Date**: 2026-11-13
-**Status**: Drafted for operator ratification
+**Status**: Drafted for operator ratification; independently assessed 2026-11-13
 **Repositories touched**: `C:\temp\projects\umaws-noscope-toy` and its two private arm copies only. The live repository was not read for results and not written. Nothing was pushed from anywhere; the toy repository has **no git remote**.
 
 ---
 
-> **UNASSESSED — READ THIS FIRST**
+> **INDEPENDENTLY ASSESSED — READ THIS FIRST**
 >
-> This report is signed by its author only. It has **not** been independently assessed, and the author does not assess its own work. Every quantitative claim below was re-derived from the event ledgers in the session that produced this report (see [Appendix A](#appendix-a--re-deriving-every-number)), but re-derivation is not assessment: it catches transcription drift, not reasoning error. Independent assessment is requested before any recommendation here is ratified.
+> This report is signed by its author and has been independently assessed by Baidu ERNIE 5.5 Flash Preview (`docs/assessment-noscope-cap-experiment-2026-11-13.md`). The assessment re-derived every headline figure from the arm ledgers and reproduced them exactly, and it raises three corrections that change how the report may be used: (1) **write-scope gating (D-L6) was never removed in either arm** — the arms ran with it in force and scope was satisfied by disjoint card construction, so this is evidence about the cap under non-conflicting scopes, not about removing scope gating; (2) D-80 and D-81 should be disposed of differently; (3) the "4.50× produced" figure is substantially a window-length artefact and should be read beside the flat landed rate. Every quantitative claim below was re-derived from the event ledgers in the session that produced this report (see [Appendix A](#appendix-a--re-deriving-every-number)), but re-derivation is not assessment: it catches transcription drift, not reasoning error.
 
 ---
 

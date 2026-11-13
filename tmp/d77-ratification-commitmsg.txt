@@ -1,0 +1,11 @@
+decision: ratify D-77 (toy-only) - Arm B packet and the H1 main-tree exception
+
+Operator instruction 2026-11-13, verbatim: "D-77 - APPROVED AND RATIFIED. follow correct project procedures to update register to show this decision."
+
+D-77 is ratified as drafted: Arm B is authorised to commit docs/PACKET.md to the toy repository and to grant a packet agent four powers - claim an existing READY card, create its own card (premise and Windows-safe oracle still required), work in the main tree, and submit for gate and integration under the lease's fence - with the H1 main-tree exception granted inside C:\temp\projects\umaws-noscope-toy, for Arm B only, never as a project default. H1 is not weakened elsewhere: Kernel.claim() still refuses a worktree-bearing grant that resolves to the repository root (src/pmk/api.py:569-578). No packet agent may write .pm/ (I2), judge its own gate (I5), or push.
+
+Status at ratification: docs/PACKET.md is absent and claim() still refuses a root-resolving worktree, so this ratifies the design and authorises the Arm B configuration; it does not assert the configuration has been applied or run. If main-tree work by un-coordinated agents damages anything even in a scratch repository, the recommendation must be to drop the power.
+
+Register changes: D-77 attribution column now records the operator's ratification; the D-75..D-77 section preamble now records D-76 and D-77 as ratified with D-75 the remaining draft; a dated D-77 ratification block is appended after D-76's.
+
+Agent: opencode (Baidu ERNIE 5.5 Flash Preview) | Model: baidu/ernie-5.5-flash-preview:free (kilo)

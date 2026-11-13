@@ -1,0 +1,36 @@
+docs: record the cap-10 re-run, which shows the cap binding
+
+Control re-run root toy-arm-cap10, launched 20:24:00Z. Window from its own
+ledger: first event 20:24:02Z to last 22:14:14Z = 6612s, agreeing with the run's
+own report of 6613s.
+
+The arm overran its budget by 3.67x, and one tick alone took 5655s - 86% of the
+whole window in a single tick. The run warned about this itself: no deadline
+logic can bound it, the conductor must be bounded, REC-15's unimplemented half.
+
+Results: 25 CLAIMED against 3 in the first pair, 32 AGENT_STARTED, 25 exited so
+7 never exited, 9 INTEGRATED and 9 tasks DONE, throughput 4.900 DONE/h, denial
+69.5%, no INCIDENT, no QUARANTINED, sentinel [] exit 0.
+
+The decisive figure is width. Concurrency reconstructed stepwise from
+AGENT_STARTED/EXITED pairs rather than lease records: at least 10 concurrent for
+92.4% of the window, at least 8 for 93.7%, and 11 concurrent for 0.0% - it never
+exceeded the cap and sat at it for nearly the whole window. This is the first
+clean evidence in the experiment that the cap sets width, and it is why the
+first pair was uninformative: with 3 claimable cards the fleet could not reach
+10 under any ceiling.
+
+Two qualifications recorded with it. Lease-based concurrency reads 19 because
+leases of never-exited agents linger, while the dispatcher limits live runs only
+(len(self.runs) >= cap, fleet/dispatcher.py:270), so the stepwise figure is the
+honest one. And 4.900 DONE/h is not an improvement over the first pair's 5.053:
+these cards are trivially satisfiable and the denominators differ by 4.6x.
+
+Also records a third operator intervention. An agent tree outlived the control
+conductor - hermes.exe with a python child still on T-0067, and a cline.exe hub
+daemon bound to work/T-0051-108. They were killed before the cap-20 launch
+because agents running into the next arm would contend for the machine and bias
+the comparison. The cap-10 figures are window-bounded and were computed before
+the kill, so they are unaffected.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: cap10

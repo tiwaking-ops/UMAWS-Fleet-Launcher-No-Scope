@@ -1,0 +1,31 @@
+docs: correct what the 48 attempts_exhausted blocks mean
+
+Section 1 originally said the cards were "failing on their own merits" and that
+supply of tractable cards limited the run. Both are wrong, so both are struck
+through in place and replaced with 1.1.
+
+What the evidence actually shows: attempts_exhausted is the L4 rung of the
+recovery ladder (recover.py:121), which fires at attempt >= 3 where that counter
+accumulates across runs. The 48 blocks are 16 cards x 3 blocks each, and none of
+those cards got a single AGENT_STARTED in this window. Across their whole
+history those 16 cards show 20 agents that started and never exited, 10
+AGENT_FAILED (9 UNKNOWN, 1 NO_CHANGES), 6 INFRASTRUCTURE_FAILED, 4 that ever
+reached the oracle gate, and 0 ever integrated.
+
+So neither the models nor the cards failed. No model-side failure class exists
+anywhere in the ledger: every AGENT_FAILED ever recorded is UNKNOWN or
+NO_CHANGES, with no QUOTA, AUTH, MODEL_GONE or CRASH. The dominant signature is
+agents cut off when their parent run ended - 38 across the whole ledger, 115
+started against 77 exited - which is the same pathology already documented in
+9.2: overrunning runs, one tick of 3399.9s, and the REC-15 NameError crash that
+killed five agents mid-flight.
+
+The consequence matters more than the correction. Those counters were spent by
+aborted runs and then inherited by the private copy, so the fleet refused cards
+that were never tried in this arm. The low width is largely an artifact of a
+poisoned card pool, not evidence that a cap of 10 fails to bind - which is what
+the original wording implied. Testing the cap needs attempt counters reset and
+both arms re-run; that is a further intervention beyond the single requeue D-79
+allows per arm and is left to the operator.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: cap10-control

@@ -1,0 +1,18 @@
+tools: let analyze_arm.py take --root instead of a hardcoded repo
+
+Line 22 pinned ROOT to the original toy repository with no way to override it.
+With private per-arm copies now in use, every analysis aimed at an arm copy read
+the wrong ledger. It failed silently rather than loudly: the wrong repo happened
+to have zero events in the control arm's window, so the control reported 0
+CLAIMED, 0 DONE and 0.000 DONE/h - indistinguishable from a run that did
+nothing.
+
+Reproduced before and after: pointing the analyzer at the cap10 copy finds 107
+events in the window where the original repo finds none.
+
+The peek parser keeps the historical behaviour intact, which was verified rather
+than assumed: with no --root the original ledger still yields 152 events, 13
+CLAIMED and 24 FLEET_BLOCKED for the corrected baseline window, exactly as
+before the change.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: cap10-control

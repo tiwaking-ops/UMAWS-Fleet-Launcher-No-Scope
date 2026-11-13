@@ -1,0 +1,30 @@
+docs: record the cap-10 control result from the private copy
+
+The first arm measured under private-copy isolation, root toy-arm-cap10. Window
+reconstructed from that copy's own ledger - start marker 11:38:58Z, last event
+12:02:43Z, 1425 s - and cross-checked against the run's own report of 1424 s.
+
+The interesting result is not throughput. The run never approached its cap: live
+width peaked at 2 against a ceiling of 10, from 3 CLAIMED and 2 DONE, with
+denial 95.1%. So this arm does not reproduce the earlier 'reaches 10' finding,
+and a fleet that never exceeds 2 cannot test the difference between cap 10 and
+cap 20 by itself.
+
+The denial breakdown says why: 48 of 58 blocks were attempts_exhausted, cards
+failing on their own merits rather than being refused for capacity. With 22 of
+44 cards already DONE at launch, the remainder is enriched for the hard ones, so
+supply of tractable cards - not the concurrency ceiling - limited this run.
+
+Throughput is given as 5.053 DONE/h because REC-16 requires dividing by the
+measured window, but it rests on 2 completed tasks and is noise-dominated. That
+is stated rather than hidden, since it is the number a reader would otherwise
+reach for.
+
+Confounds checked rather than assumed, all recorded in section 2: both copies
+inherit an untracked workload/c42 file that costs each arm 3 blocks equally;
+only the cap-10 copy carries a staged agents.toml change; and 61 attempts
+produced 3 claims, so retries are partly what is being measured.
+
+sentinel on the copy's own ledger: findings [], exit 0. No OR-15 abort.
+
+Agent: tencent-hy4-preview | Model: tencent/hy4-preview-free (orcarouter) | Arm: cap10-control
