@@ -2,9 +2,9 @@
 document:
   title: "Incident and repair report — Arm-0 measurement failure and its remediation"
   status: "Comprehensive incident report. Authoritative for what went wrong and what must change before further arms run. Authorises no further change by itself."
-  version: "1.3.2"
+  version: "1.3.3"
   date: "2026-11-12"
-  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79). v1.2.0 adds §9.1 implementation status for every REC, verified by measurement, and states REC-15's partial scope explicitly. v1.3.0 records the independent assessment: corrects the merge-conflict, anomaly-count and cap-binding claims, and adds §14. v1.3.1 adds §14.4: §9.3's baseline-2 window includes the next run's first claims, so its 2.995 DONE/h is replaced by 4.024 DONE/h in the correct window. v1.3.2 corrects §9.4: Arm A does have terminal evidence (tmp/arma.out); the void stands on contamination alone."
+  amended: "2026-11-12 - v1.1.0 resolves U-01 (cause established), adds REC-15, fixes the throughput denominator convention and the requeue decision (D-79). v1.2.0 adds §9.1 implementation status for every REC, verified by measurement, and states REC-15's partial scope explicitly. v1.3.0 records the independent assessment: corrects the merge-conflict, anomaly-count and cap-binding claims, and adds §14. v1.3.1 adds §14.4: §9.3's baseline-2 window includes the next run's first claims, so its 2.995 DONE/h is replaced by 4.024 DONE/h in the correct window. v1.3.2 corrects §9.4: Arm A does have terminal evidence (tmp/arma.out); the void stands on contamination alone. v1.3.3 (recorded by opencode, baidu/ernie-5.5-flash-preview:free) records the operator's ratification of D-76 and D-77 (2026-11-13) in §12's decision list and updates the D-79 line citation; no analysis changes."
 Author: "Tencent HY4 Preview, version tencent/hy4-preview-free (orcarouter)"
 provenance:
   author_llm: {name: "Tencent HY4 Preview", version: "tencent/hy4-preview-free (orcarouter)"}
@@ -552,7 +552,7 @@ the toy register.
 - `docs/arm0-evidence-green-run-2026-11-12.md` — defect 2 repair; Arm-0 metrics
 - `docs/arm0b-evidence-requeue-2026-11-12.md` — defects 3 and 4; Arm-0b metrics
 - `docs/baseline2-evidence-rederive-2026-11-12.md` — baseline-2 re-derived metrics, width distribution, cohort split, cleanup
-- `pilot/decisions.md` — D-75, D-76, D-77, **D-78**, **D-79** (toy-only)
+- `pilot/decisions.md` — **D-75** (draft), **D-76**, **D-77**, **D-78**, **D-79** (toy-only; D-76 and D-77 ratified 2026-11-13, D-75 still a draft)
 - Commits: `49ff873`, `534560d`, `e8d278a` (gate green), `8becbe1` (analyzer), `847bf41` (Arm-0b), `b95fabb` (D-78), `d135607` (this report v1.0.0)
 
 ---
@@ -674,7 +674,7 @@ denial-rate and width definitions need to be fixed before any arm is compared.
 
 **Conditions for a valid next arm**
 
-1. D-79 recorded (done, `pilot/decisions.md:812-816`).
+1. D-79 recorded (done, `pilot/decisions.md:815-819`).
 2. Conflict baseline corrected to 0/36 (done in §7.2).
 3. Width definition fixed: report the live-level distribution, not only the
    max-held-≥60 s figure.
