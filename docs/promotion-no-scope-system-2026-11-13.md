@@ -54,6 +54,22 @@ throwaway.
 (Apache-2.0; at promotion time it held only the LICENSE and a one-line
 description). Syncing this folder to that remote is a separate operator step.
 
+## Execution result (2026-11-13)
+
+| Step | Result |
+|---|---|
+| 0 — record | `docs/promotion-no-scope-system-2026-11-13.md` written. |
+| 1 — folder name | Kept `umaws-noscope-toy` (no rename). |
+| 2 — archive residue | `pilot/`, `workload/`, `tmp/`, 18 experiment docs, 3 experiment tools, old CNA PDD + CNA cluster (release-status, data-gaps, cna plans, coverage, test_release_status) → `archive/experiment-noscope/` via `git mv`. Commit `8376be0`. |
+| 3 — project state (3a) | `.pm/` event log kept intact (chain verifies, 1326+ events). `pmk project init` created plan task **T-0045**, state **PLANNING**. Old 44 tasks left in place as audit trail (operator decision). Commit `928e946`. |
+| 4 — rebuild & verify | `.venv` rebuilt, imports OK; `pmk sentinel` clean (all invariants); **1339 tests pass** (was 1343; −4 from archived CNA test). |
+
+**Commits:** `8052dca` (pre-sync checkpoint) → `36c48d2` (testproject1 port) →
+`8376be0` (archive) → `928e946` (fresh project + verify).
+
+**Not yet done:** push to the live GitHub repo (operator step, `gh` is
+authenticated as `tiwaking-ops` with `repo` scope).
+
 ---
 
 *author_llm: Baidu ERNIE 5.5 Flash Preview (opencode). Produced under the operator's written approval; not a self-assessment.*
